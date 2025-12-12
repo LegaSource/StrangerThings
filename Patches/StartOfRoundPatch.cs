@@ -3,7 +3,6 @@ using HarmonyLib;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
-using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Managers;
 using StrangerThings.Registries;
 using Unity.Netcode;
@@ -18,12 +17,6 @@ public class StartOfRoundPatch
     private static void StartRound(ref StartOfRound __instance)
     {
         LFCShaderFilterRegistry.AddFilter($"{StrangerThings.modName}", ShouldRender);
-
-        if (UpsideDownHiveMindController.Instance == null)
-        {
-            _ = __instance.gameObject.AddComponent<UpsideDownHiveMindController>();
-            StrangerThings.mls.LogInfo("HiveMindController instantiated.");
-        }
 
         if (NetworkManager.Singleton.IsHost && StrangerThingsNetworkManager.Instance == null)
         {

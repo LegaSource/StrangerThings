@@ -27,8 +27,14 @@ public class StrangerThings : BaseUnityPlugin
 
     public static GameObject managerPrefab = NetworkPrefabs.CreateNetworkPrefab("StrangerThingsNetworkManager");
 
+    public static Dictionary<EnemyType, int> upsideDownEnemies = [];
     public static GameObject upsideDownAtmosphere;
     public static GameObject upsideDownPortal;
+    public static GameObject rockProjectileObj;
+    public static GameObject rockExplosionParticle;
+    public static GameObject rockExplosionAudio;
+
+    public static EnemyType crustopikanLarvaeType;
 
     public void Awake()
     {
@@ -54,6 +60,7 @@ public class StrangerThings : BaseUnityPlugin
         harmony.PatchAll(typeof(FlowerSnakeEnemyPatch));
         harmony.PatchAll(typeof(HoarderBugAIPatch));
         harmony.PatchAll(typeof(SandSpiderWebTrapPatch));
+        harmony.PatchAll(typeof(DeadBodyInfoPatch));
     }
 
     public static void LoadManager()
@@ -88,6 +95,17 @@ public class StrangerThings : BaseUnityPlugin
         EnemyType demogorgonEnemy = bundle.LoadAsset<EnemyType>("Assets/Demogorgon/DemogorgonEnemy.asset");
         NetworkPrefabs.RegisterNetworkPrefab(demogorgonEnemy.enemyPrefab);
         Enemies.RegisterEnemy(demogorgonEnemy, ConfigManager.demogorgonRarity.Value, Levels.LevelTypes.All, null, null);
+
+        crustopikanLarvaeType = RegisterUpsideDownEnemy(bundle.LoadAsset<EnemyType>("Assets/CrustapikanLarvae/CrustapikanLarvaeEnemy.asset"), ConfigManager.crustapikanLarvaeRarity.Value);
+        _ = RegisterUpsideDownEnemy(bundle.LoadAsset<EnemyType>("Assets/Crustapikan/CrustapikanEnemy.asset"), ConfigManager.crustapikanRarity.Value);
+    }
+
+    public static EnemyType RegisterUpsideDownEnemy(EnemyType enemyType, int rarity)
+    {
+        NetworkPrefabs.RegisterNetworkPrefab(enemyType.enemyPrefab);
+        Enemies.RegisterEnemy(enemyType, rarity, Levels.LevelTypes.All, null, null);
+        upsideDownEnemies.Add(enemyType, rarity);
+        return enemyType;
     }
 
     public static void LoadPrefabs() => upsideDownAtmosphere = bundle.LoadAsset<GameObject>("Assets/UpsideDown/UpsideDownAtmosphere.prefab");
@@ -96,7 +114,10 @@ public class StrangerThings : BaseUnityPlugin
     {
         HashSet<GameObject> gameObjects =
         [
-            (upsideDownPortal = bundle.LoadAsset<GameObject>("Assets/Portal/UpsideDownPortal.prefab"))
+            (upsideDownPortal = bundle.LoadAsset<GameObject>("Assets/Portal/UpsideDownPortal.prefab")),
+            (rockProjectileObj = bundle.LoadAsset<GameObject>("Assets/Crustapikan/Prefabs/RockProjectile.prefab")),
+            (rockExplosionParticle = bundle.LoadAsset<GameObject>("Assets/Crustapikan/Prefabs/RockExplosionParticle.prefab")),
+            (rockExplosionAudio = bundle.LoadAsset<GameObject>("Assets/Crustapikan/Prefabs/RockExplosionAudio.prefab"))
         ];
 
         foreach (GameObject gameObject in gameObjects)

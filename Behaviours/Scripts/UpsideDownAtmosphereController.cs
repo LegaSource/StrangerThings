@@ -140,8 +140,8 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     // -----------------------------------------------------
     private void ComputeDayFactor()
     {
-        Light sun = TimeOfDay.Instance.sunDirect;
-        dayFactor = sun != null
+        Light sun = TimeOfDay.Instance?.sunDirect;
+        dayFactor = sun != null && sun.transform != null
             ? Mathf.Clamp01((Vector3.Dot(sun.transform.forward, Vector3.down) * 0.5f) + 0.5f)
             : (Mathf.Sin(Time.time * 0.05f) * 0.5f) + 0.5f;
     }
@@ -154,9 +154,7 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         if (fog == null) return;
 
         bool inside = GameNetworkManager.Instance.localPlayerController.isInsideFactory;
-
         Color baseColor = inside ? indoorFog : outdoorFog;
-
         float t = (Mathf.Sin(Time.time * fogSpeed) * 0.5f) + 0.5f;
         Color animatedColor = Color.Lerp(
             baseColor * (1f - fogVariation),
@@ -189,9 +187,7 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         if (sky == null) return;
 
         bool inside = GameNetworkManager.Instance.localPlayerController.isInsideFactory;
-
         float cycle = (Mathf.Sin(Time.time * skySpeed) * 0.5f) + 0.5f;
-
         Color top = Color.Lerp(skyTopNight, skyTopDay, dayFactor);
         Color mid = Color.Lerp(skyMidNight, skyMidDay, dayFactor);
         Color bot = Color.Lerp(skyBotNight, skyBotDay, dayFactor);

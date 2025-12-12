@@ -5,6 +5,7 @@ using StrangerThings.Behaviours.MapObjects;
 using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Managers;
 using System.Collections.Generic;
+using System.Linq;
 using Unity.Netcode;
 using UnityEngine;
 using static LegaFusionCore.Registries.LFCShipFeatureRegistry;
@@ -17,11 +18,67 @@ public class DimensionRegistry : MonoBehaviour
     private static readonly HashSet<GameObject> upsideDownEntities = [];
     private static readonly Dictionary<GameObject, EntityState> visibilityStates = [];
 
+    public static void SpawnPortalsForServer()
+    {
+        const float minDistance = 50f;
+        List<Vector3> selectedPositions = [];
+        StartOfRound.Instance.allPlayerScripts.Where(p => !p.isPlayerDead).ToList().ForEach(p => selectedPositions.Add(p.transform.position));
+
+        LFCUtilities.Shuffle(RoundManager.Instance.outsideAINodes);
+        LFCUtilities.Shuffle(RoundManager.Instance.insideAINodes);
+
+        for (int i = 0; i < 10; i++)
+        {
+            float maxDistance = float.MinValue;
+            Vector3 bestPosition = Vector3.zero;
+            GameObject lastNodeSaved = null;
+
+            // Déterminer si ce portail est à l'extérieur ou à l'intérieur
+            bool isOutside = new System.Random().Next(0, 2) == 1;
+            List<GameObject> nodes = (isOutside ? RoundManager.Instance.outsideAINodes : RoundManager.Instance.insideAINodes).ToList();
+            float radius = isOutside ? 10f : 2f;
+
+            foreach (GameObject node in nodes)
+            {
+                Vector3 candidatePosition = RoundManager.Instance.GetRandomNavMeshPositionInBoxPredictable(node.transform.position, radius, default, new System.Random()) + Vector3.up;
+                if (!Physics.Raycast(candidatePosition, Vector3.down, out RaycastHit hit, 5f, StartOfRound.Instance.collidersAndRoomMaskAndDefault)) continue;
+
+                Vector3 validPosition = hit.point;
+
+                // Calculer la distance minimale avec les positions sélectionnées
+                float minDistanceToSelected = selectedPositions.Count > 0
+                    ? selectedPositions.Min(p => Vector3.Distance(p, validPosition))
+                    : float.MaxValue;
+
+                // Garder la position la plus éloignée des autres sélectionnées
+                if (minDistanceToSelected > minDistance || minDistanceToSelected > maxDistance)
+                {
+                    maxDistance = minDistanceToSelected;
+                    bestPosition = validPosition;
+                    lastNodeSaved = node;
+
+                    if (minDistanceToSelected > minDistance) break;
+                }
+            }
+
+            if (bestPosition != Vector3.zero)
+            {
+                selectedPositions.Add(bestPosition);
+                _ = nodes.Remove(lastNodeSaved);
+
+                SpawnUpsideDownPortalForServer(bestPosition, isOutside);
+            }
+        }
+    }
+
     public static void SpawnUpsideDownPortalForServer(Vector3 position, bool isOutside)
     {
+        //if (LFCUtilities.IsServer)
+        //{
         GameObject gameObject = Instantiate(StrangerThings.upsideDownPortal, position + (Vector3.down * 0.1f), Quaternion.identity, RoundManager.Instance.mapPropsContainer.transform);
         gameObject.GetComponent<NetworkObject>().Spawn(true);
         gameObject.GetComponent<UpsideDownPortal>().InitializeEveryoneRpc(isOutside);
+        //}
     }
 
     private class EntityState
@@ -59,15 +116,7 @@ public class DimensionRegistry : MonoBehaviour
         }
 
         EnemyAI enemy = LFCUtilities.GetSafeComponent<EnemyAI>(entity);
-        if (enemy != null)
-        {
-            if (isInUpsideDown)
-                UpsideDownHiveMindController.Instance.AddEnemy(enemy);
-            else
-                UpsideDownHiveMindController.Instance.RemoveEnemy(enemy);
-
-            UpdateVisibilityState(entity);
-        }
+        if (enemy != null) UpdateVisibilityState(entity);
     }
     public static bool IsInUpsideDown(GameObject entity) => upsideDownEntities.Contains(entity);
     public static bool AreInSameDimension(GameObject a, GameObject b) => IsInUpsideDown(a) == IsInUpsideDown(b);
@@ -99,7 +148,7 @@ public class DimensionRegistry : MonoBehaviour
     }
 
     public static bool IsWhitelisted(GameObject gObject)
-        => gObject != null && (gObject.TryGetComponent<EnemyAI>(out _) || ConfigManager.visibilityStateInclusions.Value.Contains(gObject.name));
+        => gObject != null && (gObject.TryGetComponent<EnemyAI>(out _) || gObject.TryGetComponent<DeadBodyInfo>(out _) || ConfigManager.visibilityStateInclusions.Value.Contains(gObject.name));
 
     public static void UpdateVisibilityState(GameObject entity)
     {
@@ -234,16 +283,16 @@ public class DimensionRegistry : MonoBehaviour
         if (upsideDownPortals == null || upsideDownPortals.Count == 0) return null;
 
         UpsideDownPortal closest = null;
-        float closestDist = float.MaxValue;
+        float closestDistance = float.MaxValue;
 
         foreach (UpsideDownPortal portal in upsideDownPortals)
         {
             if (portal == null || portal.transform == null) continue;
 
-            float dist = Vector3.SqrMagnitude(portal.transform.position - position);
-            if (dist < closestDist)
+            float distance = Vector3.SqrMagnitude(portal.transform.position - position);
+            if (distance < closestDistance)
             {
-                closestDist = dist;
+                closestDistance = distance;
                 closest = portal;
             }
         }

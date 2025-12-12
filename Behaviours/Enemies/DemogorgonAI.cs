@@ -4,17 +4,16 @@ using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.MapObjects;
 using StrangerThings.Behaviours.Scripts;
+using StrangerThings.Managers;
 using StrangerThings.Registries;
 using System;
 using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
 using Unity.Netcode;
 using UnityEngine;
 
 namespace StrangerThings.Behaviours.Enemies;
 
-public class DemogorgonAI : EnemyAI
+public class DemogorgonAI : UpsideDownEnemyAI
 {
     public Transform TurnCompass;
     public Transform GrabPoint;
@@ -24,25 +23,17 @@ public class DemogorgonAI : EnemyAI
 
     public AudioClip[] FootstepSounds = Array.Empty<AudioClip>();
     public AudioClip[] GrowlSounds = Array.Empty<AudioClip>();
-    public AudioClip SetSound;
-    public AudioClip DigSound;
+    public AudioClip[] DemogorgonSounds = Array.Empty<AudioClip>();
     public AudioClip ScreamSound;
-    public AudioClip ChargeSound;
-    public AudioClip DashSound;
-    public AudioClip SwingSound;
-    public AudioClip RoarSound;
     public AudioClip DieSound;
-
-    public UpsideDownPortal closestPortal;
-    public DeadBodyInfo fakeBody;
 
     public float footstepTimer = 0f;
     public float growlTimer = 0f;
-    public float setTimer = 0f;
+    public float setTimer = 30f;
     public float dashTimer = 0f;
     public float huntTimer = 0f;
 
-    public float setCooldown = 30f;
+    public float setCooldown = 60f;
     public float dashCooldown = 10f;
     public float huntDuration = 30f;
 
@@ -52,18 +43,54 @@ public class DemogorgonAI : EnemyAI
     public bool isDashing = false;
     public bool isCarrying = false;
 
+    public Coroutine stunCoroutine;
     public Coroutine setCoroutine;
+    public Coroutine dropCoroutine;
     public Coroutine portalingCoroutine;
     public Coroutine dashCoroutine;
-    public Coroutine dropCoroutine;
+    public Coroutine stopDashCoroutine;
     public Coroutine swingCoroutine;
     public Coroutine killCoroutine;
+
+    public UpsideDownPortal closestPortal;
+    public DeadBodyInfo fakeBody;
 
     public enum State
     {
         WANDERING,
         PORTALING,
+        SYNCING,
         CHASING
+    }
+
+    public enum Sound
+    {
+        SET,
+        DIG,
+        CHARGE,
+        DASH,
+        SWING,
+        ROAR
+    }
+
+    public override void ForceSync()
+    {
+        if (currentBehaviourStateIndex == (int)State.WANDERING)
+        {
+            StopSearch(currentSearch);
+            DoAnimationEveryoneRpc("startChase");
+            SwitchToBehaviourClientRpc((int)State.SYNCING);
+        }
+    }
+
+    public override void ForceSend()
+    {
+        if (currentBehaviourStateIndex == (int)State.WANDERING || currentBehaviourStateIndex == (int)State.SYNCING)
+        {
+            SetMovingTowardsTargetPlayer(syncedTarget);
+            DoAnimationEveryoneRpc("startChase");
+            SwitchToBehaviourClientRpc((int)State.CHASING);
+        }
     }
 
     public override void Start()
@@ -73,83 +100,19 @@ public class DemogorgonAI : EnemyAI
         PlayerControllerB player = GameNetworkManager.Instance.localPlayerController;
         playerCamera = player.gameplayCamera;
 
+        callDistance = 60f;
         currentBehaviourStateIndex = (int)State.WANDERING;
         StartSearch(transform.position);
 
         if (LFCUtilities.IsServer && DimensionRegistry.upsideDownPortals.Count < 4)
-            SpawnPortals();
-    }
-
-    public void SpawnPortals()
-    {
-        const float minDistance = 50f;
-        List<Vector3> selectedPositions = [];
-        StartOfRound.Instance.allPlayerScripts.Where(p => !p.isPlayerDead).ToList().ForEach(p => selectedPositions.Add(p.transform.position));
-
-        LFCUtilities.Shuffle(RoundManager.Instance.outsideAINodes);
-        LFCUtilities.Shuffle(RoundManager.Instance.insideAINodes);
-
-        for (int i = 0; i < 10; i++)
-        {
-            float maxDistance = float.MinValue;
-            Vector3 bestPosition = Vector3.zero;
-            GameObject lastNodeSaved = null;
-
-            // Déterminer si ce portail est à l'extérieur ou à l'intérieur
-            bool isOutside = new System.Random().Next(0, 2) == 1;
-            List<GameObject> nodes = (isOutside ? RoundManager.Instance.outsideAINodes : RoundManager.Instance.insideAINodes).ToList();
-            float radius = isOutside ? 10f : 2f;
-
-            foreach (GameObject node in nodes)
-            {
-                Vector3 candidatePosition = RoundManager.Instance.GetRandomNavMeshPositionInBoxPredictable(node.transform.position, radius, default, new System.Random()) + Vector3.up;
-                if (!Physics.Raycast(candidatePosition, Vector3.down, out RaycastHit hit, 5f, StartOfRound.Instance.collidersAndRoomMaskAndDefault)) continue;
-
-                Vector3 validPosition = hit.point;
-
-                // Calculer la distance minimale avec les positions sélectionnées
-                float minDistanceToSelected = selectedPositions.Count > 0
-                    ? selectedPositions.Min(p => Vector3.Distance(p, validPosition))
-                    : float.MaxValue;
-
-                // Garder la position la plus éloignée des autres sélectionnées
-                if (minDistanceToSelected > minDistance || minDistanceToSelected > maxDistance)
-                {
-                    maxDistance = minDistanceToSelected;
-                    bestPosition = validPosition;
-                    lastNodeSaved = node;
-
-                    if (minDistanceToSelected > minDistance) break;
-                }
-            }
-
-            if (bestPosition != Vector3.zero)
-            {
-                selectedPositions.Add(bestPosition);
-                _ = nodes.Remove(lastNodeSaved);
-
-                DimensionRegistry.SpawnUpsideDownPortalForServer(bestPosition, isOutside);
-            }
-        }
+            DimensionRegistry.SpawnPortalsForServer();
     }
 
     public override void Update()
     {
-        if (killCoroutine != null) return;
         base.Update();
+        if (killCoroutine != null || stunCoroutine != null) return;
 
-        creatureAnimator.SetBool("stunned", stunNormalizedTimer > 0f);
-        if (stunNormalizedTimer > 0f)
-        {
-            agent.speed = 0f;
-            if (stunnedByPlayer != null)
-            {
-                targetPlayer = stunnedByPlayer;
-                StopSearch(currentSearch);
-                SwitchToBehaviourClientRpc((int)State.CHASING);
-            }
-            return;
-        }
         PlayFootstepSound();
         PlayGrowlSound();
         int state = currentBehaviourStateIndex;
@@ -172,45 +135,22 @@ public class DemogorgonAI : EnemyAI
                 cameraPivot.localEulerAngles = new Vector3(verticalAngle, cameraPivot.localEulerAngles.y, 0f);
             }
         }
-        if (!canSet)
-        {
-            setTimer += Time.deltaTime;
-            if (setTimer >= setCooldown)
-            {
-                canSet = true;
-                setTimer = 0f;
-                setCooldown = 60f;
-            }
-        }
-        if (!canDash)
-        {
-            dashTimer += Time.deltaTime;
-            if (dashTimer >= dashCooldown)
-            {
-                canDash = true;
-                dashTimer = 0f;
-            }
-        }
-        if (isHunting)
-        {
-            huntTimer += Time.deltaTime;
-            if (huntTimer >= huntDuration)
-            {
-                isHunting = false;
-                huntTimer = 0f;
-            }
-        }
+        LFCUtilities.UpdateTimer(ref setTimer, setCooldown, !canSet, () => canSet = true);
+        LFCUtilities.UpdateTimer(ref dashTimer, dashCooldown, !canDash, () => canDash = true);
+        LFCUtilities.UpdateTimer(ref huntTimer, huntDuration, isHunting, () => isHunting = false);
     }
 
     public void PlayFootstepSound()
     {
-        if (agent.velocity.magnitude < 0.1f || isDashing) return;
-
-        footstepTimer -= Time.deltaTime;
-        if (FootstepSounds.Length > 0 && footstepTimer <= 0)
+        AnimatorClipInfo[] currentAnimatorClipInfo = creatureAnimator.GetCurrentAnimatorClipInfo(0);
+        if (currentAnimatorClipInfo.Length != 0 && (currentAnimatorClipInfo[0].clip.name.Contains("walk") || currentAnimatorClipInfo[0].clip.name.Contains("chase")))
         {
-            creatureSFX.PlayOneShot(FootstepSounds[UnityEngine.Random.Range(0, FootstepSounds.Length)]);
-            footstepTimer = 0.45f;
+            footstepTimer -= Time.deltaTime;
+            if (FootstepSounds.Length > 0 && footstepTimer <= 0)
+            {
+                creatureSFX.PlayOneShot(FootstepSounds[UnityEngine.Random.Range(0, FootstepSounds.Length)]);
+                footstepTimer = 0.45f;
+            }
         }
     }
 
@@ -224,22 +164,70 @@ public class DemogorgonAI : EnemyAI
         }
     }
 
-    public override void DoAIInterval()
+    public override void SetEnemyStunned(bool setToStunned, float setToStunTime = 3.958f, PlayerControllerB setStunnedByPlayer = null)
     {
-        base.DoAIInterval();
-        if (isEnemyDead || StartOfRound.Instance.allPlayersDead) return;
+        if (LFCUtilities.IsServer && setToStunned && stunCoroutine == null && stopDashCoroutine == null && killCoroutine == null)
+        {
+            base.SetEnemyStunned(setToStunned, setToStunTime, setStunnedByPlayer);
+            stunCoroutine = StartCoroutine(StunCoroutine());
+        }
+    }
+
+    public IEnumerator StunCoroutine()
+    {
+        CancelSetCoroutine();
+        CancelDropCoroutine();
+        CancelPortalingCoroutine();
+        CancelDashCoroutine();
+        CancelSwingCoroutine();
+
+        agent.speed = 0f;
+        DoAnimationEveryoneRpc("startStun");
+        yield return this.WaitForFullAnimation("stun");
+
+        while (stunNormalizedTimer > 0f)
+            yield return null;
+
+        while (postStunInvincibilityTimer > 0f)
+            yield return null;
 
         switch (currentBehaviourStateIndex)
         {
             case (int)State.WANDERING:
-                DoWandering();
-                break;
             case (int)State.PORTALING:
-                DoPortaling();
+                if (stunnedByPlayer != null || targetPlayer != null)
+                {
+                    targetPlayer ??= stunnedByPlayer;
+                    closestPortal = null;
+                    StopSearch(currentSearch);
+                    DoAnimationEveryoneRpc("startChase");
+                    SwitchToBehaviourClientRpc((int)State.CHASING);
+                }
+                else
+                {
+                    DoAnimationEveryoneRpc("startWalk");
+                }
                 break;
+            case (int)State.SYNCING:
             case (int)State.CHASING:
-                DoChasing();
+                DoAnimationEveryoneRpc("startChase");
                 break;
+        }
+
+        stunCoroutine = null;
+    }
+
+    public override void DoAIInterval()
+    {
+        base.DoAIInterval();
+        if (isEnemyDead || StartOfRound.Instance.allPlayersDead || stunCoroutine != null) return;
+
+        switch (currentBehaviourStateIndex)
+        {
+            case (int)State.WANDERING: DoWandering(); break;
+            case (int)State.PORTALING: DoPortaling(); break;
+            case (int)State.SYNCING: DoSyncing(); break;
+            case (int)State.CHASING: DoChasing(); break;
         }
     }
 
@@ -248,7 +236,7 @@ public class DemogorgonAI : EnemyAI
         if (setCoroutine != null) return;
 
         agent.speed = 3f;
-        if (FoundClosestPlayerInRange(25, 10))
+        if (this.FoundClosestPlayerInRange(25, 10))
         {
             StopSearch(currentSearch);
             DoAnimationEveryoneRpc("startChase");
@@ -263,38 +251,43 @@ public class DemogorgonAI : EnemyAI
         }
     }
 
-    private bool FoundClosestPlayerInRange(int range, int senseRange)
-    {
-        PlayerControllerB player = CheckLineOfSightForPlayer(60f, range, senseRange);
-        return player != null && PlayerIsTargetable(player) && (bool)(targetPlayer = player);
-    }
-
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void SetEveryoneRpc(int playerId) => setCoroutine ??= StartCoroutine(SetCoroutine(StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>()));
-
     public IEnumerator SetCoroutine(PlayerControllerB player)
     {
         agent.speed = 0f;
-        creatureAnimator.SetTrigger("startSetIn");
-        creatureSFX.PlayOneShot(SetSound);
-        yield return WaitForFullAnimation("setin");
+        canSet = false;
 
-        creatureAnimator.SetTrigger("startSet");
-        yield return WaitForFullAnimation("set");
+        DoAnimationEveryoneRpc("startSetIn");
+        PlayAudioEveryoneRpc((int)Sound.SET);
+        yield return this.WaitForFullAnimation("setin");
+
+        DoAnimationEveryoneRpc("startSet");
+        yield return this.WaitForFullAnimation("set");
 
         DimensionRegistry.SpawnUpsideDownPortalForServer(transform.position, isOutside);
 
-        creatureAnimator.SetTrigger("startSetOut");
-        yield return WaitForFullAnimation("setout");
+        DoAnimationEveryoneRpc("startSetOut");
+        yield return this.WaitForFullAnimation("setout");
 
         closestPortal = DimensionRegistry.GetClosestPortal(player.transform.position);
-        yield return DigCoroutine(closestPortal.transform.position, closestPortal.isOutside, false);
+        yield return DigCoroutine(false);
 
         targetPlayer = player;
-        creatureAnimator.SetTrigger("startChase");
-        SwitchToBehaviourStateOnLocalClient((int)State.CHASING);
+        DoAnimationEveryoneRpc("startChase");
+        SwitchToBehaviourClientRpc((int)State.CHASING);
 
         setCoroutine = null;
+    }
+
+    public void CancelSetCoroutine()
+    {
+        if (setCoroutine != null)
+        {
+            StopCoroutine(setCoroutine);
+            setCoroutine = null;
+            closestPortal = null;
+            canSet = true;
+            setTimer = 0f;
+        }
     }
 
     public void DoPortaling()
@@ -302,55 +295,72 @@ public class DemogorgonAI : EnemyAI
         if (dropCoroutine != null || portalingCoroutine != null) return;
 
         agent.speed = 6f;
-        if (closestPortal == null) closestPortal = DimensionRegistry.GetClosestPortal(transform.position);
+        if (!isCarrying && this.FoundClosestPlayerInRange(25, 10))
+        {
+            closestPortal = null;
+            SwitchToBehaviourClientRpc((int)State.CHASING);
+            return;
+        }
+        closestPortal ??= DimensionRegistry.GetClosestPortal(transform.position);
         if (Vector3.Distance(transform.position, closestPortal.transform.position) <= 1f)
         {
-            if (isCarrying) DropEveryoneRpc((int)targetPlayer.playerClientId);
-            else PortalingEveryoneRpc(closestPortal.transform.position, closestPortal.isOutside, !DimensionRegistry.IsInUpsideDown(gameObject));
+            if (isCarrying) dropCoroutine ??= StartCoroutine(DropCoroutine(targetPlayer));
+            else portalingCoroutine ??= StartCoroutine(PortalingCoroutine(!DimensionRegistry.IsInUpsideDown(gameObject)));
             return;
         }
         _ = SetDestinationToPosition(closestPortal.transform.position);
     }
 
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void DropEveryoneRpc(int playerId) => dropCoroutine ??= StartCoroutine(DropCoroutine(StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>()));
-
-    private IEnumerator DropCoroutine(PlayerControllerB player)
+    public IEnumerator DropCoroutine(PlayerControllerB player)
     {
         agent.speed = 0f;
-        creatureAnimator.SetTrigger("startDrop");
+        DoAnimationEveryoneRpc("startDrop");
+        yield return this.WaitForFullAnimation("drop");
 
-        yield return WaitForFullAnimation("drop");
-
-        DropPlayer(player, closestPortal.transform.position);
-        yield return DigCoroutine(closestPortal.transform.position, closestPortal.isOutside, true);
+        DropPlayerEveryoneRpc((int)player.playerClientId);
+        yield return DigCoroutine(true);
 
         targetPlayer = player;
-        creatureAnimator.SetTrigger("startChase");
-        SwitchToBehaviourStateOnLocalClient((int)State.CHASING);
+        DoAnimationEveryoneRpc("startChase");
+        SwitchToBehaviourClientRpc((int)State.CHASING);
 
         dropCoroutine = null;
     }
 
-    public void DropPlayer(PlayerControllerB player, Vector3 position)
+    public void CancelDropCoroutine()
     {
+        if (dropCoroutine != null)
+        {
+            StopCoroutine(dropCoroutine);
+            dropCoroutine = null;
+        }
+        if (isCarrying)
+            DropPlayerEveryoneRpc((int)targetPlayer.playerClientId, isInUpsideDown: false);
+    }
+
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void DropPlayerEveryoneRpc(int playerId, bool isInUpsideDown = true)
+    {
+        PlayerControllerB player = StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>();
         isCarrying = false;
 
         if (!player.isPlayerDead)
         {
+            player.DisablePlayerModel(player.gameObject, enable: true, disableLocalArms: true);
+            player.inSpecialInteractAnimation = false;
+            player.inAnimationWithEnemy = null;
+            player.ResetZAndXRotation();
+
+            if (LFCUtilities.IsServer)
+            {
+                if (isInUpsideDown) closestPortal.SetPlayerInUpsideDownEveryoneRpc((int)player.playerClientId);
+                LFCNetworkManager.Instance.TeleportPlayerEveryoneRpc((int)player.playerClientId, transform.position, false, false, !isOutside);
+            }
             if (LFCUtilities.ShouldBeLocalPlayer(player))
             {
                 camera.enabled = false;
                 player.gameplayCamera = playerCamera;
             }
-            player.DisablePlayerModel(player.gameObject, enable: true, disableLocalArms: true);
-            player.inSpecialInteractAnimation = false;
-            player.inAnimationWithEnemy = null;
-            player.ResetZAndXRotation();
-            DimensionRegistry.SetUpsideDown(player.gameObject, true);
-
-            if (LFCUtilities.IsServer)
-                LFCNetworkManager.Instance.TeleportPlayerEveryoneRpc((int)player.playerClientId, position, false, false, !isOutside);
         }
 
         if (fakeBody != null)
@@ -364,130 +374,116 @@ public class DemogorgonAI : EnemyAI
         }
     }
 
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PortalingEveryoneRpc(Vector3 position, bool isOutside, bool isInUpsideDown) => portalingCoroutine ??= StartCoroutine(PortalingCoroutine(position, isOutside, isInUpsideDown));
-
-    private IEnumerator PortalingCoroutine(Vector3 position, bool isOutside, bool isInUpsideDown)
+    public IEnumerator PortalingCoroutine(bool isInUpsideDown)
     {
         agent.speed = 0f;
-        yield return DigCoroutine(position, isOutside, isInUpsideDown);
+        yield return DigCoroutine(isInUpsideDown);
 
-        if (LFCUtilities.IsServer)
+        if (targetPlayer == null)
         {
-            if (targetPlayer == null)
-            {
-                StartSearch(transform.position);
-                DoAnimationEveryoneRpc("startWalk");
-                SwitchToBehaviourClientRpc((int)State.WANDERING);
-            }
-            else
-            {
-                DoAnimationEveryoneRpc("startChase");
-                SwitchToBehaviourClientRpc((int)State.CHASING);
-            }
+            StartSearch(transform.position);
+            DoAnimationEveryoneRpc("startWalk");
+            SwitchToBehaviourClientRpc((int)State.WANDERING);
+        }
+        else
+        {
+            DoAnimationEveryoneRpc("startChase");
+            SwitchToBehaviourClientRpc((int)State.CHASING);
         }
 
         portalingCoroutine = null;
     }
 
-    private IEnumerator DigCoroutine(Vector3 position, bool isOutside, bool isInUpsideDown)
+    public void CancelPortalingCoroutine()
     {
-        creatureAnimator.SetTrigger("startDig");
-        creatureSFX.PlayOneShot(DigSound);
-        yield return WaitForFullAnimation("dig");
+        if (portalingCoroutine != null)
+        {
+            StopCoroutine(portalingCoroutine);
+            portalingCoroutine = null;
+            closestPortal = null;
+        }
+    }
 
-        creatureAnimator.SetTrigger("startDigIn");
-        yield return WaitForFullAnimation("digin");
+    public IEnumerator DigCoroutine(bool isInUpsideDown)
+    {
+        DoAnimationEveryoneRpc("startDig");
+        PlayAudioEveryoneRpc((int)Sound.DIG);
+        yield return this.WaitForFullAnimation("dig");
 
-        LFCNetworkManager.Instance.TeleportEnemyEveryoneRpc(thisNetworkObject, position, isOutside);
+        DoAnimationEveryoneRpc("startDigIn");
+        yield return this.WaitForFullAnimation("digin");
+
+        LFCNetworkManager.Instance.TeleportEnemyEveryoneRpc(thisNetworkObject, closestPortal.transform.position, closestPortal.isOutside);
         if (DimensionRegistry.IsInUpsideDown(gameObject) != isInUpsideDown)
-            DimensionRegistry.SetUpsideDown(gameObject, isInUpsideDown);
+            StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(thisNetworkObject);
 
-        creatureAnimator.SetTrigger("startDigOut");
-
-        GameObject audioObj = new GameObject("ScreamAudio");
-        audioObj.transform.parent = GameNetworkManager.Instance.localPlayerController.transform;
-        audioObj.transform.localPosition = Vector3.forward * 50f;
-        AudioSource audioSource = audioObj.AddComponent<AudioSource>();
-        audioSource.clip = ScreamSound;
-        audioSource.spatialBlend = 1f;
-        audioSource.minDistance = 10f;
-        audioSource.maxDistance = 200f;
-        audioSource.rolloffMode = AudioRolloffMode.Linear;
-        audioSource.Play();
-        Destroy(audioObj, ScreamSound.length);
-
-        yield return WaitForFullAnimation("digout");
+        DoAnimationEveryoneRpc("startDigOut");
+        PlayScreamAudioEveryoneRpc();
+        yield return this.WaitForFullAnimation("digout");
 
         closestPortal = null;
     }
 
-    public void DoChasing()
+    public void DoSyncing()
     {
-        if (dashCoroutine != null || swingCoroutine != null || killCoroutine != null) return;
-
-        agent.speed = 6f;
-        float distanceWithPlayer = Vector3.Distance(transform.position, targetPlayer.transform.position);
-        if (this.TargetOutsideChasedPlayer()) return;
-        if (targetPlayer != null && !DimensionRegistry.AreInSameDimension(gameObject, targetPlayer.gameObject))
+        if (caller == null || caller.isEnemyDead)
         {
-            SwitchToBehaviourClientRpc((int)State.PORTALING);
-            return;
-        }
-        if (!TargetClosestPlayerInAnyCase() || (!isHunting && distanceWithPlayer > 30 && !CheckLineOfSightForPosition(targetPlayer.transform.position)))
-        {
+            RemoveCaller();
             StartSearch(transform.position);
             DoAnimationEveryoneRpc("startWalk");
             SwitchToBehaviourClientRpc((int)State.WANDERING);
-            return;
         }
-        if (canDash && distanceWithPlayer <= 12f && distanceWithPlayer >= 4 && CheckLineOfSightForPosition(targetPlayer.transform.position))
+        agent.speed = Vector3.Distance(transform.position, caller.transform.position) < 10f ? 3f : 6f;
+        _ = SetDestinationToPosition(caller.transform.position);
+    }
+
+    public void DoChasing()
+    {
+        if (swingCoroutine != null || killCoroutine != null) return;
+
+        if (dashCoroutine == null)
         {
-            canDash = false;
-            DashEveryoneRpc((int)targetPlayer.playerClientId);
-            return;
+            agent.speed = 6f;
+            if (this.TargetOutsideChasedPlayer()) return;
+            if (targetPlayer != null && !DimensionRegistry.AreInSameDimension(gameObject, targetPlayer.gameObject))
+            {
+                SwitchToBehaviourClientRpc((int)State.PORTALING);
+                return;
+            }
+            float distanceWithPlayer = Vector3.Distance(transform.position, targetPlayer.transform.position);
+            if (!this.TargetClosestPlayerInAnyCase() || (!isHunting && distanceWithPlayer > 30f && !CheckLineOfSightForPosition(targetPlayer.transform.position)))
+            {
+                StartSearch(transform.position);
+                DoAnimationEveryoneRpc("startWalk");
+                SwitchToBehaviourClientRpc((int)State.WANDERING);
+                return;
+            }
+            if (canDash && distanceWithPlayer <= 12f && distanceWithPlayer >= 4f && CheckLineOfSightForPosition(targetPlayer.transform.position))
+            {
+                canDash = false;
+                dashCoroutine ??= StartCoroutine(DashCoroutine());
+                return;
+            }
         }
         SetMovingTowardsTargetPlayer(targetPlayer);
     }
 
-    public bool TargetClosestPlayerInAnyCase()
-    {
-        mostOptimalDistance = 2000f;
-        targetPlayer = null;
-        for (int i = 0; i < StartOfRound.Instance.connectedPlayersAmount + 1; i++)
-        {
-            PlayerControllerB player = StartOfRound.Instance.allPlayerScripts[i];
-            if (!PlayerIsTargetable(player)) continue;
-
-            tempDist = Vector3.Distance(transform.position, StartOfRound.Instance.allPlayerScripts[i].transform.position);
-            if (tempDist < mostOptimalDistance)
-            {
-                mostOptimalDistance = tempDist;
-                targetPlayer = StartOfRound.Instance.allPlayerScripts[i];
-            }
-        }
-        return targetPlayer != null;
-    }
-
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void DashEveryoneRpc(int playerId) => dashCoroutine ??= StartCoroutine(DashCoroutine(StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>()));
-
-    public IEnumerator DashCoroutine(PlayerControllerB player)
+    public IEnumerator DashCoroutine()
     {
         agent.speed = 0f;
-        creatureAnimator.SetTrigger("startCharge");
-        creatureSFX.PlayOneShot(ChargeSound);
-        yield return WaitForFullAnimation("charge");
+        DoAnimationEveryoneRpc("startCharge");
+        PlayAudioEveryoneRpc((int)Sound.CHARGE);
+        yield return this.WaitForFullAnimation("charge");
 
-        creatureAnimator.SetTrigger("startDash");
-        creatureSFX.PlayOneShot(DashSound);
+        DoAnimationEveryoneRpc("startDash");
+        PlayAudioEveryoneRpc((int)Sound.DASH);
 
         isDashing = true;
         agent.speed = 24f;
         agent.angularSpeed = 0f;
         agent.acceleration = 100f;
 
-        Vector3 dashDirection = (player.transform.position - transform.position).normalized;
+        Vector3 dashDirection = (targetPlayer.transform.position - transform.position).normalized;
         float dashTime = 0.6f;
         float timer = 0f;
         while (timer < dashTime && isDashing)
@@ -497,58 +493,55 @@ public class DemogorgonAI : EnemyAI
             yield return null;
         }
 
-        StopDash();
+        yield return new WaitForSeconds(0.35f);
+        if (isDashing) StopDash();
     }
 
-    private void StopDash(PlayerControllerB player = null)
+    public void StopDash(PlayerControllerB player = null)
     {
-        if (isDashing)
-        {
-            agent.speed = 0f;
-            isDashing = false;
-            creatureAnimator.ResetTrigger("startDash");
-            creatureAnimator.SetTrigger(player == null || DimensionRegistry.IsInUpsideDown(gameObject) ? "startRecover" : "startGrab");
-            _ = StartCoroutine(StartMovingAfterDash(player));
-        }
+        agent.speed = 0f;
+        isDashing = false;
+        ResetAnimationEveryoneRpc("startDash");
+        DoAnimationEveryoneRpc(player == null || DimensionRegistry.IsInUpsideDown(gameObject) ? "startRecover" : "startGrab");
+        stopDashCoroutine ??= StartCoroutine(StopDashCoroutine(player));
     }
 
-    private IEnumerator StartMovingAfterDash(PlayerControllerB player)
+    public IEnumerator StopDashCoroutine(PlayerControllerB player)
     {
         if (player == null || DimensionRegistry.IsInUpsideDown(gameObject))
         {
-            creatureSFX.PlayOneShot(RoarSound);
-            yield return WaitForFullAnimation("recover");
-            creatureAnimator.SetTrigger("startChase");
+            if (player != null) LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 80, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
+            PlayAudioEveryoneRpc((int)Sound.ROAR);
+            yield return this.WaitForFullAnimation("recover");
+            DoAnimationEveryoneRpc("startChase");
         }
         else
         {
-            GrabPlayer(player);
-            yield return WaitForFullAnimation("grab");
-            creatureAnimator.SetTrigger("startCarry");
-
-            if (LFCUtilities.ShouldBeLocalPlayer(player))
-            {
-                camera.enabled = true;
-                player.gameplayCamera = camera;
-            }
+            GrabPlayerEveryoneRpc((int)player.playerClientId);
+            yield return this.WaitForFullAnimation("grab");
+            DoAnimationEveryoneRpc("startCarry");
         }
 
+        CancelDashCoroutine();
+        if (isCarrying) SwitchToBehaviourClientRpc((int)State.PORTALING);
+        stopDashCoroutine = null;
+    }
+
+    public void CancelDashCoroutine()
+    {
         if (dashCoroutine != null)
         {
             StopCoroutine(dashCoroutine);
             dashCoroutine = null;
+            isDashing = false;
+            ResetDashMovement();
         }
-
-        agent.speed = 6f;
-        agent.angularSpeed = 120f;
-        agent.acceleration = 8f;
-        agent.velocity = Vector3.zero;
-
-        if (isCarrying) SwitchToBehaviourStateOnLocalClient((int)State.PORTALING);
     }
 
-    public void GrabPlayer(PlayerControllerB player)
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void GrabPlayerEveryoneRpc(int playerId)
     {
+        PlayerControllerB player = StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>();
         isCarrying = true;
 
         if (player.inSpecialInteractAnimation && player.currentTriggerInAnimationWith != null)
@@ -580,6 +573,20 @@ public class DemogorgonAI : EnemyAI
 
         ScanNodeProperties scanNode = fakeBody.gameObject.GetComponentInChildren<ScanNodeProperties>();
         if (scanNode != null && scanNode.TryGetComponent(out Collider collider)) collider.enabled = false;
+
+        if (LFCUtilities.ShouldBeLocalPlayer(player))
+        {
+            camera.enabled = true;
+            player.gameplayCamera = camera;
+        }
+    }
+
+    public void ResetDashMovement()
+    {
+        agent.speed = 6f;
+        agent.angularSpeed = 120f;
+        agent.acceleration = 8f;
+        agent.velocity = Vector3.zero;
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
@@ -598,11 +605,9 @@ public class DemogorgonAI : EnemyAI
 
         AnimatedObjectTrigger objectTrigger = networkObject.gameObject.GetComponentInChildren<AnimatedObjectTrigger>();
         objectTrigger?.PlayAudio(objectTrigger.boolValue, true);
-
-        ApplyDoorHitDamage(networkObject.gameObject, rb.velocity);
     }
 
-    private IEnumerator ReleaseDoor(Rigidbody rb, Vector3 force)
+    public IEnumerator ReleaseDoor(Rigidbody rb, Vector3 force)
     {
         yield return new WaitForFixedUpdate();
         rb.AddForce(force, ForceMode.Impulse);
@@ -611,78 +616,70 @@ public class DemogorgonAI : EnemyAI
         rb.useGravity = true;
     }
 
-    private void ApplyDoorHitDamage(GameObject doorPiece, Vector3 velocity)
-    {
-        if (velocity.magnitude < 3f) return;
-
-        Collider collider = doorPiece.GetComponentInChildren<Collider>();
-        Collider[] hits = Physics.OverlapBox(collider.bounds.center, collider.bounds.extents * 1.2f, doorPiece.transform.rotation);
-        foreach (Collider hit in hits)
-        {
-            PlayerControllerB player = hit.GetComponentInParent<PlayerControllerB>();
-            if (player == null) continue;
-
-            LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, (int)Mathf.Clamp(velocity.magnitude * 4f, 1f, 15f));
-        }
-    }
-
     public override void OnCollideWithPlayer(Collider other)
     {
         base.OnCollideWithPlayer(other);
 
-        if (currentBehaviourStateIndex != (int)State.CHASING || swingCoroutine != null || killCoroutine != null) return;
+        if (currentBehaviourStateIndex != (int)State.CHASING || killCoroutine != null) return;
         PlayerControllerB player = MeetsStandardPlayerCollisionConditions(other);
         if (!LFCUtilities.ShouldBeLocalPlayer(player)) return;
 
-        if (isDashing)
-        {
-            LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 80);
-            StopDashEveryoneRpc((int)player.playerClientId);
-        }
-        if (dashCoroutine == null) SwingEveryoneRpc((int)player.playerClientId);
+        OnCollideWithPlayerServerRpc((int)player.playerClientId);
     }
 
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void StopDashEveryoneRpc(int playerId) => StopDash(StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>());
-
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void SwingEveryoneRpc(int playerId) => swingCoroutine ??= StartCoroutine(SwingCoroutine(StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>()));
+    [Rpc(SendTo.Server, RequireOwnership = false)]
+    public void OnCollideWithPlayerServerRpc(int playerId)
+    {
+        PlayerControllerB player = StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>();
+        if (isDashing) StopDash(player);
+        if (dashCoroutine == null) swingCoroutine ??= StartCoroutine(SwingCoroutine(player));
+    }
 
     public IEnumerator SwingCoroutine(PlayerControllerB player)
     {
         agent.speed = 0f;
-        creatureAnimator.SetTrigger("startSwing");
-        creatureSFX.PlayOneShot(SwingSound);
-        yield return WaitForFullAnimation("swing");
+        DoAnimationEveryoneRpc("startSwing");
+        PlayAudioEveryoneRpc((int)Sound.SWING);
+        yield return this.WaitForFullAnimation("swing");
 
-        player.DamagePlayer(20, hasDamageSFX: true, callRPC: true, CauseOfDeath.Crushing);
-        creatureAnimator.SetTrigger("startRoar");
-        creatureSFX.PlayOneShot(RoarSound);
-        yield return WaitForFullAnimation("roar");
+        LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 20, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
+        DoAnimationEveryoneRpc("startRoar");
+        PlayAudioEveryoneRpc((int)Sound.ROAR);
+        yield return this.WaitForFullAnimation("roar");
 
-        creatureAnimator.SetTrigger("startChase");
+        DoAnimationEveryoneRpc("startChase");
         agent.speed = 6f;
 
         swingCoroutine = null;
     }
 
-    public override void HitEnemy(int force = 1, PlayerControllerB playerWhoHit = null, bool playHitSFX = false, int hitID = -1)
+    public void CancelSwingCoroutine()
     {
-        if (isEnemyDead || !DimensionRegistry.IsInUpsideDown(gameObject)) return;
-        base.HitEnemy(force, playerWhoHit, playHitSFX, hitID);
-
-        enemyHP -= force;
-        if (enemyHP <= 0 && IsOwner) KillEnemyOnOwnerClient();
+        if (swingCoroutine != null)
+        {
+            StopCoroutine(swingCoroutine);
+            swingCoroutine = null;
+        }
     }
 
-    public override void KillEnemy(bool destroy = false) => killCoroutine = StartCoroutine(KillEnemyCoroutine(destroy));
+    public override void HitEnemy(int force = 1, PlayerControllerB playerWhoHit = null, bool playHitSFX = false, int hitID = -1)
+    {
+        if (!isEnemyDead && DimensionRegistry.IsInUpsideDown(gameObject))
+            base.HitEnemy(force, playerWhoHit, playHitSFX, hitID);
+    }
+
+    public override void KillEnemy(bool destroy = false)
+    {
+        RemoveCaller();
+        killCoroutine = StartCoroutine(KillEnemyCoroutine(destroy));
+    }
 
     public IEnumerator KillEnemyCoroutine(bool destroy)
     {
         creatureAnimator.SetTrigger("startKill");
         creatureSFX.PlayOneShot(DieSound);
 
-        yield return WaitForFullAnimation("kill");
+        yield return this.WaitForFullAnimation("kill");
         yield return new WaitForSeconds(1f);
 
         LFCGlobalManager.PlayParticle($"{LegaFusionCore.LegaFusionCore.modName}{LegaFusionCore.LegaFusionCore.darkExplosionParticle.name}", transform.position, Quaternion.Euler(-90, 0, 0));
@@ -690,29 +687,31 @@ public class DemogorgonAI : EnemyAI
         base.KillEnemy(destroy);
     }
 
-    private IEnumerator WaitForFullAnimation(string clipName, float maxDuration = 10, int layer = 0)
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void PlayScreamAudioEveryoneRpc()
     {
-        float timer = 0f;
-
-        // Attendre que le clip démarre
-        while (true)
-        {
-            AnimatorClipInfo[] clip = creatureAnimator.GetCurrentAnimatorClipInfo(layer);
-            if (clip.Length > 0 && clip[0].clip.name.Contains(clipName)) break;
-
-            timer += Time.deltaTime;
-            if (timer > maxDuration) yield break;
-            yield return null;
-        }
-
-        // Attendre fin du clip
-        while (creatureAnimator.GetCurrentAnimatorStateInfo(layer).normalizedTime < 1f)
-        {
-            timer += Time.deltaTime;
-            if (timer > maxDuration) yield break;
-            yield return null;
-        }
+        GameObject audioObj = new GameObject("ScreamAudio");
+        audioObj.transform.parent = GameNetworkManager.Instance.localPlayerController.transform;
+        audioObj.transform.localPosition = Vector3.forward * 100f;
+        AudioSource audioSource = audioObj.AddComponent<AudioSource>();
+        audioSource.clip = ScreamSound;
+        audioSource.spatialBlend = 1f;
+        audioSource.minDistance = 10f;
+        audioSource.maxDistance = 200f;
+        audioSource.rolloffMode = AudioRolloffMode.Linear;
+        audioSource.Play();
+        Destroy(audioObj, ScreamSound.length);
     }
+
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void PlayAudioEveryoneRpc(int enemySound)
+    {
+        if (DemogorgonSounds.Length > 0)
+            creatureSFX.PlayOneShot(DemogorgonSounds[enemySound]);
+    }
+
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void ResetAnimationEveryoneRpc(string animationState) => creatureAnimator.ResetTrigger(animationState);
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
     public void DoAnimationEveryoneRpc(string animationState) => creatureAnimator.SetTrigger(animationState);

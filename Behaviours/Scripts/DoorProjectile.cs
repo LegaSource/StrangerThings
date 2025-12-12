@@ -45,7 +45,7 @@ public class DoorProjectile : MonoBehaviour
     {
         yield return new WaitForSeconds(delay);
 
-        if (rigidbody == null) rigidbody = GetComponent<Rigidbody>();
+        rigidbody ??= GetComponent<Rigidbody>();
         Destroy(rigidbody);
         foreach (Collider collider in GetComponentsInChildren<Collider>()) Destroy(collider);
         foreach (NavMeshObstacle obstacle in GetComponentsInChildren<NavMeshObstacle>())
