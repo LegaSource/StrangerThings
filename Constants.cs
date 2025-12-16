@@ -2,6 +2,8 @@
 
 internal class Constants
 {
+    // Configs
+    public const string GLOBAL = "_Global_";
     // Enemies
     public const string DEMOGORGON = "Demogorgon";
     public const string VECNA = "Vecna";

@@ -103,9 +103,7 @@ public class DemogorgonAI : UpsideDownEnemyAI
         callDistance = 60f;
         currentBehaviourStateIndex = (int)State.WANDERING;
         StartSearch(transform.position);
-
-        if (LFCUtilities.IsServer && DimensionRegistry.upsideDownPortals.Count < 4)
-            DimensionRegistry.SpawnPortalsForServer();
+        DimensionRegistry.SpawnPortalsForServer();
     }
 
     public override void Update()
@@ -302,6 +300,11 @@ public class DemogorgonAI : UpsideDownEnemyAI
             return;
         }
         closestPortal ??= DimensionRegistry.GetClosestPortal(transform.position);
+        if (closestPortal == null)
+        {
+            SwitchToBehaviourClientRpc((int)State.CHASING);
+            return;
+        }
         if (Vector3.Distance(transform.position, closestPortal.transform.position) <= 1f)
         {
             if (isCarrying) dropCoroutine ??= StartCoroutine(DropCoroutine(targetPlayer));
@@ -353,7 +356,8 @@ public class DemogorgonAI : UpsideDownEnemyAI
 
             if (LFCUtilities.IsServer)
             {
-                if (isInUpsideDown) closestPortal.SetPlayerInUpsideDownEveryoneRpc((int)player.playerClientId);
+                if (isInUpsideDown)
+                    StrangerThingsNetworkManager.Instance.SetPlayerInUpsideDownEveryoneRpc((int)player.playerClientId);
                 LFCNetworkManager.Instance.TeleportPlayerEveryoneRpc((int)player.playerClientId, transform.position, false, false, !isOutside);
             }
             if (LFCUtilities.ShouldBeLocalPlayer(player))
@@ -692,7 +696,7 @@ public class DemogorgonAI : UpsideDownEnemyAI
     {
         GameObject audioObj = new GameObject("ScreamAudio");
         audioObj.transform.parent = GameNetworkManager.Instance.localPlayerController.transform;
-        audioObj.transform.localPosition = Vector3.forward * 100f;
+        audioObj.transform.localPosition = Vector3.forward * 160f;
         AudioSource audioSource = audioObj.AddComponent<AudioSource>();
         audioSource.clip = ScreamSound;
         audioSource.spatialBlend = 1f;

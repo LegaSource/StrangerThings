@@ -20,6 +20,8 @@ public class DimensionRegistry : MonoBehaviour
 
     public static void SpawnPortalsForServer()
     {
+        if (!LFCUtilities.IsServer || upsideDownPortals.Count >= 4) return;
+
         const float minDistance = 50f;
         List<Vector3> selectedPositions = [];
         StartOfRound.Instance.allPlayerScripts.Where(p => !p.isPlayerDead).ToList().ForEach(p => selectedPositions.Add(p.transform.position));
@@ -27,14 +29,17 @@ public class DimensionRegistry : MonoBehaviour
         LFCUtilities.Shuffle(RoundManager.Instance.outsideAINodes);
         LFCUtilities.Shuffle(RoundManager.Instance.insideAINodes);
 
-        for (int i = 0; i < 10; i++)
+        // Garantir au moins un portail à l'intérieur et à l'extérieur
+        List<bool> portalTypes = [true, false];
+        while (portalTypes.Count < 10)
+            portalTypes.Add(Random.value > 0.5f);
+
+        foreach (bool isOutside in portalTypes)
         {
             float maxDistance = float.MinValue;
             Vector3 bestPosition = Vector3.zero;
             GameObject lastNodeSaved = null;
 
-            // Déterminer si ce portail est à l'extérieur ou à l'intérieur
-            bool isOutside = new System.Random().Next(0, 2) == 1;
             List<GameObject> nodes = (isOutside ? RoundManager.Instance.outsideAINodes : RoundManager.Instance.insideAINodes).ToList();
             float radius = isOutside ? 10f : 2f;
 
@@ -73,22 +78,20 @@ public class DimensionRegistry : MonoBehaviour
 
     public static void SpawnUpsideDownPortalForServer(Vector3 position, bool isOutside)
     {
-        //if (LFCUtilities.IsServer)
-        //{
         GameObject gameObject = Instantiate(StrangerThings.upsideDownPortal, position + (Vector3.down * 0.1f), Quaternion.identity, RoundManager.Instance.mapPropsContainer.transform);
         gameObject.GetComponent<NetworkObject>().Spawn(true);
         gameObject.GetComponent<UpsideDownPortal>().InitializeEveryoneRpc(isOutside);
-        //}
     }
 
     private class EntityState
     {
-        public List<Renderer> disabledRenderers = [];
-        public List<Light> disabledLights = [];
-        public List<Collider> disabledColliders = [];
-        public List<ScanNodeProperties> disabledScanNodes = [];
-        public List<InteractTrigger> disabledTriggers = [];
-        public List<ParticleSystem> disabledParticles = [];
+        public HashSet<Renderer> disabledRenderers = [];
+        public HashSet<Light> disabledLights = [];
+        public HashSet<EnemyAICollisionDetect> disabledEnemyCollisions = [];
+        public HashSet<ScanNodeProperties> disabledScanNodes = [];
+        public HashSet<InteractTrigger> disabledTriggers = [];
+        public HashSet<ParticleSystem> disabledParticles = [];
+        public HashSet<Collider> disabledColliders = [];
         public Dictionary<AudioSource, float> audioVolumes = [];
     }
 
@@ -101,40 +104,44 @@ public class DimensionRegistry : MonoBehaviour
         {
             if (LFCUtilities.ShouldBeLocalPlayer(player))
             {
-                RefreshStates();
-                UpdateLightsVisibility();
-                UpdateShipFeatures();
+                RefreshStatesForLocalClient();
+                UpdateLightsVisibilityForLocalClient();
+                UpdateShipFeaturesForLocalClient();
+                UpdateFlickeringFlashlights(player);
                 UpsideDownAtmosphereController.Instance.SetUpsideDownState(isInUpsideDown);
             }
             else
             {
                 UpdateVisibilityState(player.gameObject);
+                UpdateFlickeringFlashlights(player);
             }
 
             StartOfRound.Instance.UpdatePlayerVoiceEffects();
             return;
         }
 
-        EnemyAI enemy = LFCUtilities.GetSafeComponent<EnemyAI>(entity);
-        if (enemy != null) UpdateVisibilityState(entity);
+        UpdateVisibilityState(entity);
     }
     public static bool IsInUpsideDown(GameObject entity) => upsideDownEntities.Contains(entity);
     public static bool AreInSameDimension(GameObject a, GameObject b) => IsInUpsideDown(a) == IsInUpsideDown(b);
 
-    private static void RefreshStates()
+    public static void RefreshStatesForLocalClient()
     {
         foreach (NetworkBehaviour networkBehaviour in FindObjectsOfType<NetworkBehaviour>(true))
         {
-            if (IsWhitelisted(networkBehaviour.gameObject))
+            if (networkBehaviour.IsSpawned && IsWhitelisted(networkBehaviour.gameObject))
                 UpdateVisibilityState(networkBehaviour.gameObject);
         }
 
         foreach (SandSpiderWebTrap webTrap in FindObjectsOfType<SandSpiderWebTrap>(true))
             UpdateVisibilityState(webTrap.gameObject);
 
+        foreach (DeadBodyInfo deadBodyInfo in FindObjectsOfType<DeadBodyInfo>(true))
+            UpdateVisibilityState(deadBodyInfo.gameObject);
+
         foreach (GrabbableObject grabbableObject in LFCSpawnRegistry.GetAllAs<GrabbableObject>())
         {
-            if (LFCUtilities.ShouldBeLocalPlayer(grabbableObject.playerHeldBy))
+            if (GameNetworkManager.Instance.localPlayerController.ItemSlots.Contains(grabbableObject))
                 StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>());
             else
                 UpdateVisibilityState(grabbableObject.gameObject);
@@ -147,102 +154,7 @@ public class DimensionRegistry : MonoBehaviour
         }
     }
 
-    public static bool IsWhitelisted(GameObject gObject)
-        => gObject != null && (gObject.TryGetComponent<EnemyAI>(out _) || gObject.TryGetComponent<DeadBodyInfo>(out _) || ConfigManager.visibilityStateInclusions.Value.Contains(gObject.name));
-
-    public static void UpdateVisibilityState(GameObject entity)
-    {
-        if (AreInSameDimension(GameNetworkManager.Instance.localPlayerController.gameObject, entity))
-            Restore(entity);
-        else
-            Hide(entity);
-    }
-
-    private static void Hide(GameObject entity)
-    {
-        if (visibilityStates.ContainsKey(entity)) return;
-        EntityState state = new EntityState();
-
-        foreach (Renderer renderer in entity.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer.enabled)
-            {
-                renderer.enabled = false;
-                state.disabledRenderers.Add(renderer);
-            }
-        }
-        foreach (Light light in entity.GetComponentsInChildren<Light>(true))
-        {
-            if (light.enabled)
-            {
-                light.enabled = false;
-                state.disabledLights.Add(light);
-            }
-        }
-        foreach (Collider collider in entity.GetComponentsInChildren<Collider>(true))
-        {
-            if (collider.enabled)
-            {
-                collider.enabled = false;
-                state.disabledColliders.Add(collider);
-            }
-        }
-        foreach (ScanNodeProperties scanNode in entity.GetComponentsInChildren<ScanNodeProperties>(true))
-        {
-            if (scanNode.enabled && scanNode.TryGetComponent(out Collider collider))
-            {
-                collider.enabled = false;
-                state.disabledScanNodes.Add(scanNode);
-            }
-        }
-        foreach (InteractTrigger interactTrigger in entity.GetComponentsInChildren<InteractTrigger>(true))
-        {
-            if (interactTrigger.enabled && interactTrigger.TryGetComponent(out Collider collider))
-            {
-                collider.enabled = false;
-                state.disabledTriggers.Add(interactTrigger);
-            }
-        }
-        foreach (ParticleSystem particle in entity.GetComponentsInChildren<ParticleSystem>(true))
-        {
-            if (particle.isPlaying)
-            {
-                particle.Stop();
-                state.disabledParticles.Add(particle);
-            }
-        }
-        foreach (AudioSource audioSource in entity.GetComponentsInChildren<AudioSource>(true))
-        {
-            state.audioVolumes[audioSource] = audioSource.volume;
-            audioSource.volume = 0f;
-        }
-
-        visibilityStates[entity] = state;
-    }
-
-    private static void Restore(GameObject entity)
-    {
-        if (!visibilityStates.TryGetValue(entity, out EntityState state)) return;
-
-        foreach (Renderer renderer in state.disabledRenderers)
-            if (renderer != null) renderer.enabled = true;
-        foreach (Light light in state.disabledLights)
-            if (light != null) light.enabled = true;
-        foreach (Collider collider in state.disabledColliders)
-            if (collider != null) collider.enabled = true;
-        foreach (ScanNodeProperties scanNode in state.disabledScanNodes)
-            if (scanNode != null && scanNode.TryGetComponent(out Collider collider)) collider.enabled = true;
-        foreach (InteractTrigger interactTrigger in state.disabledTriggers)
-            if (interactTrigger != null && interactTrigger.TryGetComponent(out Collider collider)) collider.enabled = true;
-        foreach (ParticleSystem particle in state.disabledParticles)
-            particle?.Play();
-        foreach (KeyValuePair<AudioSource, float> kv in state.audioVolumes)
-            if (kv.Key) kv.Key.volume = kv.Value;
-
-        _ = visibilityStates.Remove(entity);
-    }
-
-    private static void UpdateLightsVisibility()
+    private static void UpdateLightsVisibilityForLocalClient()
     {
         foreach (Animator poweredLight in RoundManager.Instance.allPoweredLightsAnimators)
         {
@@ -253,7 +165,7 @@ public class DimensionRegistry : MonoBehaviour
         }
     }
 
-    private static void UpdateShipFeatures()
+    private static void UpdateShipFeaturesForLocalClient()
     {
         if (IsInUpsideDown(GameNetworkManager.Instance.localPlayerController.gameObject))
         {
@@ -267,16 +179,130 @@ public class DimensionRegistry : MonoBehaviour
             AddLock(ShipFeatureType.SHIP_TELEPORTERS, StrangerThings.modName);
             return;
         }
-
-        RemoveLock(ShipFeatureType.SHIP_LIGHTS, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.MAP_SCREEN, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.SHIP_DOORS, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.SHIP_LEVER, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.SHIP_TERMINAL, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.ITEM_CHARGER, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.SHIP_TV, StrangerThings.modName);
-        RemoveLock(ShipFeatureType.SHIP_TELEPORTERS, StrangerThings.modName);
+        ClearLocks(StrangerThings.modName);
     }
+
+    public static void UpdateVisibilityState(GameObject entity)
+    {
+        if (AreInSameDimension(GameNetworkManager.Instance.localPlayerController.gameObject, entity))
+            Restore(entity);
+        else
+            Hide(entity);
+    }
+
+    private static void Hide(GameObject entity)
+    {
+        if (!visibilityStates.TryGetValue(entity, out EntityState state))
+        {
+            state = new EntityState();
+            visibilityStates[entity] = state;
+        }
+
+        foreach (Renderer renderer in entity.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer.enabled)
+            {
+                renderer.enabled = false;
+                _ = state.disabledRenderers.Add(renderer);
+            }
+        }
+        foreach (Light light in entity.GetComponentsInChildren<Light>(true))
+        {
+            if (light.enabled)
+            {
+                light.enabled = false;
+                _ = state.disabledLights.Add(light);
+            }
+        }
+        foreach (EnemyAICollisionDetect enemyCollision in entity.GetComponentsInChildren<EnemyAICollisionDetect>(true))
+        {
+            if (enemyCollision.enabled && enemyCollision.TryGetComponent(out Collider collider))
+            {
+                collider.enabled = false;
+                _ = state.disabledEnemyCollisions.Add(enemyCollision);
+            }
+        }
+        foreach (ScanNodeProperties scanNode in entity.GetComponentsInChildren<ScanNodeProperties>(true))
+        {
+            if (scanNode.enabled && scanNode.TryGetComponent(out Collider collider))
+            {
+                collider.enabled = false;
+                _ = state.disabledScanNodes.Add(scanNode);
+            }
+        }
+        foreach (InteractTrigger interactTrigger in entity.GetComponentsInChildren<InteractTrigger>(true))
+        {
+            if (interactTrigger.enabled && interactTrigger.TryGetComponent(out Collider collider))
+            {
+                collider.enabled = false;
+                _ = state.disabledTriggers.Add(interactTrigger);
+            }
+        }
+        foreach (ParticleSystem particle in entity.GetComponentsInChildren<ParticleSystem>(true))
+        {
+            if (particle.isPlaying)
+            {
+                particle.Stop();
+                _ = state.disabledParticles.Add(particle);
+            }
+        }
+        foreach (Collider collider in entity.GetComponentsInChildren<Collider>(true))
+        {
+            if (!collider.isTrigger)
+            {
+                collider.isTrigger = true;
+                _ = state.disabledColliders.Add(collider);
+            }
+        }
+        foreach (AudioSource audioSource in entity.GetComponentsInChildren<AudioSource>(true))
+        {
+            if (audioSource.volume > 0f)
+            {
+                state.audioVolumes[audioSource] = audioSource.volume;
+                audioSource.volume = 0f;
+            }
+        }
+    }
+
+    private static void Restore(GameObject entity)
+    {
+        if (!visibilityStates.TryGetValue(entity, out EntityState state)) return;
+
+        foreach (Renderer renderer in state.disabledRenderers)
+            if (renderer != null) renderer.enabled = true;
+        foreach (Light light in state.disabledLights)
+            if (light != null) light.enabled = true;
+        foreach (EnemyAICollisionDetect enemyCollision in state.disabledEnemyCollisions)
+            if (enemyCollision != null && enemyCollision.TryGetComponent(out Collider collider)) collider.enabled = true;
+        foreach (ScanNodeProperties scanNode in state.disabledScanNodes)
+            if (scanNode != null && scanNode.TryGetComponent(out Collider collider)) collider.enabled = true;
+        foreach (InteractTrigger interactTrigger in state.disabledTriggers)
+            if (interactTrigger != null && interactTrigger.TryGetComponent(out Collider collider)) collider.enabled = true;
+        foreach (ParticleSystem particle in state.disabledParticles)
+            particle?.Play();
+        foreach (Collider collider in state.disabledColliders)
+            if (collider != null) collider.isTrigger = false;
+        foreach (KeyValuePair<AudioSource, float> kv in state.audioVolumes)
+            if (kv.Key) kv.Key.volume = kv.Value;
+
+        _ = visibilityStates.Remove(entity);
+    }
+
+    private static void UpdateFlickeringFlashlights(PlayerControllerB player)
+    {
+        if (!IsInUpsideDown(player.gameObject))
+        {
+            HashSet<Component> flashlights = LFCSpawnRegistry.GetSetExact<FlashlightItem>();
+            if (flashlights != null)
+            {
+                foreach (FlashlightItem flashlight in flashlights.Cast<FlashlightItem>())
+                    LFCObjectStateRegistry.RemoveFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{player.playerUsername}");
+            }
+        }
+    }
+
+    public static bool IsWhitelisted(GameObject gObject)
+        => gObject != null && (gObject.TryGetComponent<EnemyAI>(out _) || ConfigManager.visibilityStateInclusions.Value.Contains(gObject.name));
 
     public static UpsideDownPortal GetClosestPortal(Vector3 position)
     {

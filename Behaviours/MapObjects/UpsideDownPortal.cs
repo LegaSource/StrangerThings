@@ -2,6 +2,7 @@
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Enemies;
+using StrangerThings.Managers;
 using StrangerThings.Registries;
 using System.Linq;
 using Unity.Netcode;
@@ -27,18 +28,11 @@ public class UpsideDownPortal : NetworkBehaviour
     {
         if (isLocked)
         {
-            HUDManager.Instance.DisplayTip("Impossible action", "The portal seems to be blocked for now...");
-            return;
+            //HUDManager.Instance.DisplayTip("Impossible action", "The portal seems to be blocked for now...");
+            //return;
         }
-        SetPlayerInUpsideDownEveryoneRpc((int)GameNetworkManager.Instance.localPlayerController.playerClientId);
-    }
-
-    [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void SetPlayerInUpsideDownEveryoneRpc(int playerId)
-    {
         isLocked = true;
-        GameObject playerObj = StartOfRound.Instance.allPlayerObjects[playerId];
-        DimensionRegistry.SetUpsideDown(playerObj, !DimensionRegistry.IsInUpsideDown(playerObj));
+        StrangerThingsNetworkManager.Instance.SetPlayerInUpsideDownEveryoneRpc((int)GameNetworkManager.Instance.localPlayerController.playerClientId);
     }
 
     public void Update()
@@ -58,13 +52,14 @@ public class UpsideDownPortal : NetworkBehaviour
     {
         if (LFCUtilities.IsServer && other.CompareTag("Player"))
         {
+            PlayerControllerB player = other.GetComponent<PlayerControllerB>();
             DemogorgonAI demogorgon = LFCSpawnRegistry.GetAllAs<EnemyAI>()
                 .OfType<DemogorgonAI>()
-                .FirstOrDefault(d => d.canSet && d.currentBehaviourStateIndex == (int)DemogorgonAI.State.WANDERING);
+                .FirstOrDefault(d => d.canSet && d.currentBehaviourStateIndex == (int)DemogorgonAI.State.WANDERING && DimensionRegistry.AreInSameDimension(d.gameObject, player.gameObject));
             if (demogorgon != null)
             {
                 demogorgon.isHunting = true;
-                demogorgon.setCoroutine ??= demogorgon.StartCoroutine(demogorgon.SetCoroutine(other.GetComponent<PlayerControllerB>()));
+                demogorgon.setCoroutine ??= demogorgon.StartCoroutine(demogorgon.SetCoroutine(player));
             }
         }
     }

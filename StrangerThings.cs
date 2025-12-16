@@ -30,6 +30,7 @@ public class StrangerThings : BaseUnityPlugin
     public static Dictionary<EnemyType, int> upsideDownEnemies = [];
     public static GameObject upsideDownAtmosphere;
     public static GameObject upsideDownPortal;
+    public static GameObject upsideDownMirrorObject;
     public static GameObject rockProjectileObj;
     public static GameObject rockExplosionParticle;
     public static GameObject rockExplosionAudio;
@@ -48,11 +49,13 @@ public class StrangerThings : BaseUnityPlugin
         LoadEnemies();
         LoadPrefabs();
         LoadNetworkPrefabs();
-        //LoadShaders();
 
         harmony.PatchAll(typeof(NetworkBehaviourPatch));
         harmony.PatchAll(typeof(StartOfRoundPatch));
+        harmony.PatchAll(typeof(RoundManagerPatch));
         harmony.PatchAll(typeof(PlayerControllerBPatch));
+        harmony.PatchAll(typeof(GrabbableObjectPatch));
+        harmony.PatchAll(typeof(FlashlightItemPatch));
         harmony.PatchAll(typeof(StormyWeatherPatch));
         harmony.PatchAll(typeof(LightningBoltScriptPatch));
         harmony.PatchAll(typeof(DoorLockPatch));
@@ -115,6 +118,7 @@ public class StrangerThings : BaseUnityPlugin
         HashSet<GameObject> gameObjects =
         [
             (upsideDownPortal = bundle.LoadAsset<GameObject>("Assets/Portal/UpsideDownPortal.prefab")),
+            (upsideDownMirrorObject = bundle.LoadAsset<GameObject>("Assets/Items/UpsideDownMirrorObject.prefab")),
             (rockProjectileObj = bundle.LoadAsset<GameObject>("Assets/Crustapikan/Prefabs/RockProjectile.prefab")),
             (rockExplosionParticle = bundle.LoadAsset<GameObject>("Assets/Crustapikan/Prefabs/RockExplosionParticle.prefab")),
             (rockExplosionAudio = bundle.LoadAsset<GameObject>("Assets/Crustapikan/Prefabs/RockExplosionAudio.prefab"))
@@ -126,6 +130,4 @@ public class StrangerThings : BaseUnityPlugin
             Utilities.FixMixerGroups(gameObject);
         }
     }
-
-    //public static void LoadShaders() => upsideDownInfection = bundle.LoadAsset<Material>("Assets/Shaders/UpsideDownInfection.mat");
 }

@@ -2,6 +2,7 @@
 using LegaFusionCore.Managers;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Utilities;
+using StrangerThings.Registries;
 using System;
 using System.Collections;
 using Unity.Netcode;
@@ -234,8 +235,9 @@ public class CrustapikanLarvaeAI : UpsideDownEnemyAI
         while (entity != null)
         {
             float distanceWithEntity = Vector3.Distance(transform.position, entity.position);
-            if (distanceWithEntity > 5f && distanceWithEntity < maxDistance)
-                yield return null;
+            if (distanceWithEntity <= 5f || distanceWithEntity >= maxDistance || !DimensionRegistry.AreInSameDimension(entity.gameObject, gameObject)) break;
+
+            yield return null;
         }
 
         agent.speed = 0f;

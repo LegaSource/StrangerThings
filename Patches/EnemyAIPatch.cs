@@ -15,9 +15,6 @@ public class EnemyAIPatch
     [HarmonyPostfix]
     private static void StartEnemy(ref EnemyAI __instance)
     {
-        if (DimensionRegistry.IsInUpsideDown(GameNetworkManager.Instance.localPlayerController.gameObject))
-            DimensionRegistry.UpdateVisibilityState(__instance.gameObject);
-
         if (LFCUtilities.IsServer && /*__instance.enemyType != null && !__instance.enemyType.isDaytimeEnemy &&*/ !DimensionRegistry.IsInUpsideDown(__instance.gameObject))
             SpawnUpsideDownEnemy(__instance.isOutside);
     }

@@ -1,10 +1,10 @@
 ﻿using GameNetcodeStuff;
 using HarmonyLib;
-using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Managers;
 using StrangerThings.Registries;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -12,6 +12,8 @@ namespace StrangerThings.Patches;
 
 public class StartOfRoundPatch
 {
+    public static HashSet<GameObject> auraBypass = [];
+
     [HarmonyPatch(typeof(StartOfRound), nameof(StartOfRound.Start))]
     [HarmonyPostfix]
     private static void StartRound(ref StartOfRound __instance)
@@ -27,17 +29,17 @@ public class StartOfRoundPatch
     }
 
     private static bool ShouldRender(GameObject gObject)
-        => DimensionRegistry.AreInSameDimension(GameNetworkManager.Instance.localPlayerController.gameObject, gObject);
+        => auraBypass.Contains(gObject) || DimensionRegistry.AreInSameDimension(GameNetworkManager.Instance.localPlayerController.gameObject, gObject);
 
     [HarmonyPatch(typeof(StartOfRound), nameof(StartOfRound.ShipLeave))]
     [HarmonyPostfix]
-    public static void EndRound()
+    public static void EndRound(ref StartOfRound __instance)
     {
-        PlayerControllerB player = GameNetworkManager.Instance.localPlayerController;
-
-        if (DimensionRegistry.IsInUpsideDown(player.gameObject))
-            LFCNetworkManager.Instance.KillPlayerEveryoneRpc((int)player.playerClientId, Vector3.zero, false, (int)CauseOfDeath.Unknown);
-
+        foreach (PlayerControllerB player in __instance.allPlayerScripts)
+        {
+            if (DimensionRegistry.IsInUpsideDown(player.gameObject))
+                DimensionRegistry.SetUpsideDown(player.gameObject, false);
+        }
         DimensionRegistry.upsideDownPortals.Clear();
     }
 
@@ -64,10 +66,8 @@ public class StartOfRoundPatch
             }
 
             float multiplier = 1f;
-
             if (DimensionRegistry.AreInSameDimension(localPlayer.gameObject, player.gameObject))
                 multiplier = DimensionRegistry.IsInUpsideDown(localPlayer.gameObject) ? 0.5f : 0f;
-
             player.voicePlayerState.Volume = multiplier;
             player.currentVoiceChatAudioSource.volume = multiplier;
         }

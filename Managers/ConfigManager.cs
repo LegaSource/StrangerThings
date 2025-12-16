@@ -4,6 +4,8 @@ namespace StrangerThings.Managers;
 
 public class ConfigManager
 {
+    // Global
+    public static ConfigEntry<string> scrapExclusions;
     // Demogorgon
     public static ConfigEntry<int> demogorgonRarity;
     // Vecna
@@ -17,6 +19,8 @@ public class ConfigManager
 
     public static void Load()
     {
+        // Global
+        scrapExclusions = StrangerThings.configFile.Bind(Constants.GLOBAL, "Exclusion list", "Key,Bee hive,Apparatus", "List of scraps that will not spawn in the Upside Down.\nYou can add scraps by separating them with a comma.");
         // Demogorgon
         demogorgonRarity = StrangerThings.configFile.Bind(Constants.DEMOGORGON, "Rarity", 20, $"{Constants.DEMOGORGON} base rarity.");
         // Vecna

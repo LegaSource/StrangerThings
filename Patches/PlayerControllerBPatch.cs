@@ -1,14 +1,21 @@
 ﻿using GameNetcodeStuff;
 using HarmonyLib;
+using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Registries;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace StrangerThings.Patches;
 
 public class PlayerControllerBPatch
 {
+    private static bool canFlick = false;
+    private static float flickerTimer = 0f;
+    private static readonly float flickerCooldown = 2f;
+
     [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.ConnectClientToPlayerObject))]
     [HarmonyPostfix]
     private static void StartPlayer(ref PlayerControllerB __instance)
@@ -20,11 +27,36 @@ public class PlayerControllerBPatch
         }
     }
 
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.Update))]
+    [HarmonyPostfix]
+    private static void UpdatePlayer(ref PlayerControllerB __instance)
+    {
+        LFCUtilities.UpdateTimer(ref flickerTimer, flickerCooldown, !canFlick, () => canFlick = true);
+        if (!canFlick || !DimensionRegistry.IsInUpsideDown(__instance.gameObject)) return;
+
+        foreach (Animator poweredLight in RoundManager.Instance?.allPoweredLightsAnimators)
+        {
+            if (!LFCPoweredLightsRegistry.IsLocked(poweredLight) && (poweredLight.transform.position - __instance.transform.position).sqrMagnitude <= 25f)
+                poweredLight.SetTrigger("Flicker");
+        }
+
+        HashSet<Component> flashlights = LFCSpawnRegistry.GetSetExact<FlashlightItem>();
+        if (flashlights == null) return;
+
+        foreach (FlashlightItem flashlight in flashlights.Cast<FlashlightItem>())
+        {
+            if (!DimensionRegistry.IsInUpsideDown(flashlight.gameObject) && (flashlight.transform.position - __instance.transform.position).sqrMagnitude <= 25f)
+                LFCObjectStateRegistry.AddFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{__instance.playerUsername}");
+            else
+                LFCObjectStateRegistry.RemoveFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{__instance.playerUsername}");
+        }
+    }
+
     [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.KillPlayer))]
     [HarmonyPostfix]
     private static void KillPlayer(ref PlayerControllerB __instance)
     {
-        if (LFCUtilities.ShouldBeLocalPlayer(__instance) && DimensionRegistry.IsInUpsideDown(__instance.gameObject))
+        if (DimensionRegistry.IsInUpsideDown(__instance.gameObject))
             DimensionRegistry.SetUpsideDown(__instance.gameObject, false);
     }
 }

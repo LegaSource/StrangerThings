@@ -12,7 +12,7 @@ public class NetworkBehaviourPatch
     {
         if (GameNetworkManager.Instance?.localPlayerController == null) return;
 
-        if (DimensionRegistry.IsWhitelisted(__instance.gameObject))
+        if (DimensionRegistry.IsWhitelisted(__instance.gameObject) || __instance is GrabbableObject)
             DimensionRegistry.UpdateVisibilityState(__instance.gameObject);
     }
 }
