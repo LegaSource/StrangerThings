@@ -1,5 +1,6 @@
 ﻿using HarmonyLib;
 using LegaFusionCore.Managers;
+using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Managers;
@@ -39,9 +40,8 @@ public class RoundManagerPatch
         }
     }
 
-    public static GrabbableObject SpawnUpsideDownObject(Item itemToSpawn)
+    public static GrabbableObject SpawnUpsideDownObject(Item itemToSpawn, int value = 0)
     {
-        StrangerThings.mls.LogWarning("SpawnUpsideDownObject for " + itemToSpawn.name);
         RoundManager roundManager = RoundManager.Instance;
         List<RandomScrapSpawn> listRandomScrapSpawn = Object.FindObjectsOfType<RandomScrapSpawn>().ToList();
         if (!listRandomScrapSpawn.Any()) return null;
@@ -54,6 +54,7 @@ public class RoundManagerPatch
         Vector3 position = randomScrapSpawn.transform.position + (Vector3.up * 0.5f);
         GrabbableObject grabbableObject = LFCObjectsManager.SpawnObjectForServer(itemToSpawn.spawnPrefab, position);
         StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>());
+        LFCNetworkManager.Instance.SetScrapValueEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), value);
 
         return grabbableObject;
     }

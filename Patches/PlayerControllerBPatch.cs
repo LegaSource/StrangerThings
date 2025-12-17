@@ -14,7 +14,7 @@ public class PlayerControllerBPatch
 {
     private static bool canFlick = false;
     private static float flickerTimer = 0f;
-    private static readonly float flickerCooldown = 2f;
+    private static readonly float flickerCooldown = 0.5f;
 
     [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.ConnectClientToPlayerObject))]
     [HarmonyPostfix]
@@ -31,14 +31,29 @@ public class PlayerControllerBPatch
     [HarmonyPostfix]
     private static void UpdatePlayer(ref PlayerControllerB __instance)
     {
-        LFCUtilities.UpdateTimer(ref flickerTimer, flickerCooldown, !canFlick, () => canFlick = true);
+        if (LFCUtilities.ShouldBeLocalPlayer(__instance))
+        {
+            LFCUtilities.UpdateTimer(ref flickerTimer, flickerCooldown, !canFlick, () => canFlick = true);
+            return;
+        }
         if (!canFlick || !DimensionRegistry.IsInUpsideDown(__instance.gameObject)) return;
 
+        canFlick = false;
+        Animator bestPoweredLight = null;
+        float bestDistance = float.MaxValue;
         foreach (Animator poweredLight in RoundManager.Instance?.allPoweredLightsAnimators)
         {
-            if (!LFCPoweredLightsRegistry.IsLocked(poweredLight) && (poweredLight.transform.position - __instance.transform.position).sqrMagnitude <= 25f)
-                poweredLight.SetTrigger("Flicker");
+            float distance = (poweredLight.transform.position - __instance.transform.position).sqrMagnitude;
+            if (!LFCPoweredLightsRegistry.IsLocked(poweredLight) && distance <= 50f)
+            {
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestPoweredLight = poweredLight;
+                }
+            }
         }
+        bestPoweredLight?.SetTrigger("Flicker");
 
         HashSet<Component> flashlights = LFCSpawnRegistry.GetSetExact<FlashlightItem>();
         if (flashlights == null) return;

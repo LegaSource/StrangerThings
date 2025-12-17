@@ -67,7 +67,7 @@ public class StartOfRoundPatch
 
             float multiplier = 1f;
             if (DimensionRegistry.AreInSameDimension(localPlayer.gameObject, player.gameObject))
-                multiplier = DimensionRegistry.IsInUpsideDown(localPlayer.gameObject) ? 0.5f : 0f;
+                multiplier = DimensionRegistry.IsInUpsideDown(localPlayer.gameObject) ? 0.4f : 0f;
             player.voicePlayerState.Volume = multiplier;
             player.currentVoiceChatAudioSource.volume = multiplier;
         }

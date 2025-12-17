@@ -27,24 +27,21 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
     {
         if (heldParticles == null || twin == null || mirror == null) return;
 
-        PlayerControllerB player = mirror.playerHeldBy;
-        if (!LFCUtilities.ShouldBeLocalPlayer(player)) return;
-
         fxTick -= Time.deltaTime;
         if (fxTick <= 0f)
         {
             fxTick = fxTickInterval;
-            UpdateHeldFxLayeredColor();
+            UpdateHeldFxLayeredColor(mirror.playerHeldBy);
         }
-        ShowAuraTwinObject(player);
+        ShowAuraTwinObject(mirror.playerHeldBy);
     }
 
-    private void UpdateHeldFxLayeredColor()
+    private void UpdateHeldFxLayeredColor(PlayerControllerB player)
     {
-        if (!mirror.isHeld || mirror.isPocketed || DimensionRegistry.AreInSameDimension(mirror.gameObject, twin.gameObject))
+        if (!mirror.isHeld || mirror.isPocketed || !LFCUtilities.ShouldBeLocalPlayer(player) || DimensionRegistry.AreInSameDimension(mirror.gameObject, twin.gameObject))
         {
             if (heldParticles != null && heldParticles.isPlaying)
-                heldParticles.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+                heldParticles.Stop();
             return;
         }
 
@@ -89,13 +86,14 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
 
     public void ShowAuraTwinObject(PlayerControllerB player)
     {
-        if (!DimensionRegistry.IsInUpsideDown(player.gameObject)) return;
+        if (!LFCUtilities.ShouldBeLocalPlayer(player) || !DimensionRegistry.IsInUpsideDown(player.gameObject)) return;
         if (!mirror.isHeld
             || mirror.isPocketed
             || !twin.isHeld
             || twin.isPocketed
+            || !LFCUtilities.ShouldBeLocalPlayer(player)
             || DimensionRegistry.AreInSameDimension(mirror.gameObject, twin.gameObject)
-            || !player.HasLineOfSightToPosition(twin.transform.position, 20f, 3))
+            || !player.HasLineOfSightToPosition(twin.transform.position, 20f, 3, 1f))
         {
             RemoveAuraTwinObject();
             return;
@@ -109,10 +107,13 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
 
     public void RemoveAuraTwinObject()
     {
-        canFusion = false;
-        twinRenderers?.ForEach(r => r.enabled = false);
-        _ = StartOfRoundPatch.auraBypass.Remove(twin.gameObject);
-        CustomPassManager.RemoveAuraByTag($"{StrangerThings.modName}TwinObject");
+        if (DimensionRegistry.IsInUpsideDown(GameNetworkManager.Instance.localPlayerController.gameObject))
+        {
+            canFusion = false;
+            twinRenderers?.ForEach(r => r.enabled = false);
+            _ = StartOfRoundPatch.auraBypass.Remove(twin.gameObject);
+            CustomPassManager.RemoveAuraByTag($"{StrangerThings.modName}TwinObject");
+        }
     }
 
     [Rpc(SendTo.Server, RequireOwnership = false)]
@@ -120,6 +121,8 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
     {
         LFCNetworkManager.Instance.SetScrapValueEveryoneRpc(twin.GetComponent<NetworkObject>(), twin.scrapValue * valueMultiplier);
         LFCNetworkManager.Instance.DestroyObjectEveryoneRpc(mirror.GetComponent<NetworkObject>());
+        if (twin.playerHeldBy != null)
+            LFCNetworkManager.Instance.ForceDiscardObjectEveryoneRpc(twin.GetComponent<NetworkObject>(), (int)twin.playerHeldBy.playerClientId);
         Destroy(gameObject);
     }
 

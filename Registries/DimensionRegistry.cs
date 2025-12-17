@@ -6,6 +6,7 @@ using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Managers;
 using System.Collections.Generic;
 using System.Linq;
+using TMPro;
 using Unity.Netcode;
 using UnityEngine;
 using static LegaFusionCore.Registries.LFCShipFeatureRegistry;
@@ -87,11 +88,11 @@ public class DimensionRegistry : MonoBehaviour
     {
         public HashSet<Renderer> disabledRenderers = [];
         public HashSet<Light> disabledLights = [];
-        public HashSet<EnemyAICollisionDetect> disabledEnemyCollisions = [];
+        public HashSet<Collider> disabledColliders = [];
+        public HashSet<TextMeshProUGUI> disabledTextMeshes = [];
         public HashSet<ScanNodeProperties> disabledScanNodes = [];
         public HashSet<InteractTrigger> disabledTriggers = [];
         public HashSet<ParticleSystem> disabledParticles = [];
-        public HashSet<Collider> disabledColliders = [];
         public Dictionary<AudioSource, float> audioVolumes = [];
     }
 
@@ -214,12 +215,20 @@ public class DimensionRegistry : MonoBehaviour
                 _ = state.disabledLights.Add(light);
             }
         }
-        foreach (EnemyAICollisionDetect enemyCollision in entity.GetComponentsInChildren<EnemyAICollisionDetect>(true))
+        foreach (Collider collider in entity.GetComponentsInChildren<Collider>(true))
         {
-            if (enemyCollision.enabled && enemyCollision.TryGetComponent(out Collider collider))
+            if (collider.enabled)
             {
                 collider.enabled = false;
-                _ = state.disabledEnemyCollisions.Add(enemyCollision);
+                _ = state.disabledColliders.Add(collider);
+            }
+        }
+        foreach (TextMeshProUGUI textMesh in entity.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            if (textMesh.enabled)
+            {
+                textMesh.enabled = false;
+                _ = state.disabledTextMeshes.Add(textMesh);
             }
         }
         foreach (ScanNodeProperties scanNode in entity.GetComponentsInChildren<ScanNodeProperties>(true))
@@ -246,14 +255,6 @@ public class DimensionRegistry : MonoBehaviour
                 _ = state.disabledParticles.Add(particle);
             }
         }
-        foreach (Collider collider in entity.GetComponentsInChildren<Collider>(true))
-        {
-            if (!collider.isTrigger)
-            {
-                collider.isTrigger = true;
-                _ = state.disabledColliders.Add(collider);
-            }
-        }
         foreach (AudioSource audioSource in entity.GetComponentsInChildren<AudioSource>(true))
         {
             if (audioSource.volume > 0f)
@@ -272,16 +273,16 @@ public class DimensionRegistry : MonoBehaviour
             if (renderer != null) renderer.enabled = true;
         foreach (Light light in state.disabledLights)
             if (light != null) light.enabled = true;
-        foreach (EnemyAICollisionDetect enemyCollision in state.disabledEnemyCollisions)
-            if (enemyCollision != null && enemyCollision.TryGetComponent(out Collider collider)) collider.enabled = true;
+        foreach (Collider collider in state.disabledColliders)
+            if (collider != null) collider.enabled = true;
+        foreach (TextMeshProUGUI textMesh in state.disabledTextMeshes)
+            if (textMesh != null) textMesh.enabled = true;
         foreach (ScanNodeProperties scanNode in state.disabledScanNodes)
             if (scanNode != null && scanNode.TryGetComponent(out Collider collider)) collider.enabled = true;
         foreach (InteractTrigger interactTrigger in state.disabledTriggers)
             if (interactTrigger != null && interactTrigger.TryGetComponent(out Collider collider)) collider.enabled = true;
         foreach (ParticleSystem particle in state.disabledParticles)
             particle?.Play();
-        foreach (Collider collider in state.disabledColliders)
-            if (collider != null) collider.isTrigger = false;
         foreach (KeyValuePair<AudioSource, float> kv in state.audioVolumes)
             if (kv.Key) kv.Key.volume = kv.Value;
 
