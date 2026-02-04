@@ -3,7 +3,9 @@ using LegaFusionCore.Managers;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
+using StrangerThings.Behaviours.Items;
 using StrangerThings.Managers;
+using StrangerThings.Registries;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,7 +22,7 @@ public class RoundManagerPatch
     {
         while (result.MoveNext()) yield return result.Current;
 
-        int maxSpawn = new System.Random().Next(5, 6);
+        int maxSpawn = Random.Range(ConfigManager.minMirrorScraps.Value, ConfigManager.maxMirrorScraps.Value + 1);
         int nbSpawn = 0;
         foreach (GrabbableObject grabbableObject in LFCSpawnRegistry.GetAllAs<GrabbableObject>())
         {
@@ -42,20 +44,59 @@ public class RoundManagerPatch
 
     public static GrabbableObject SpawnUpsideDownObject(Item itemToSpawn, int value = 0)
     {
-        RoundManager roundManager = RoundManager.Instance;
         List<RandomScrapSpawn> listRandomScrapSpawn = Object.FindObjectsOfType<RandomScrapSpawn>().ToList();
-        if (!listRandomScrapSpawn.Any()) return null;
+        if (listRandomScrapSpawn.Any())
+        {
+            LFCUtilities.Shuffle(listRandomScrapSpawn);
+            int indexRandomScrapSpawn = new System.Random().Next(0, listRandomScrapSpawn.Count);
+            RandomScrapSpawn randomScrapSpawn = listRandomScrapSpawn[indexRandomScrapSpawn];
+            RoundManager roundManager = RoundManager.Instance;
+            randomScrapSpawn.transform.position = roundManager.GetRandomNavMeshPositionInBoxPredictable(randomScrapSpawn.transform.position, randomScrapSpawn.itemSpawnRange, roundManager.navHit, roundManager.AnomalyRandom) + (Vector3.up * itemToSpawn.verticalOffset);
 
-        LFCUtilities.Shuffle(listRandomScrapSpawn);
-        int indexRandomScrapSpawn = new System.Random().Next(0, listRandomScrapSpawn.Count);
-        RandomScrapSpawn randomScrapSpawn = listRandomScrapSpawn[indexRandomScrapSpawn];
-        randomScrapSpawn.transform.position = roundManager.GetRandomNavMeshPositionInBoxPredictable(randomScrapSpawn.transform.position, randomScrapSpawn.itemSpawnRange, roundManager.navHit, roundManager.AnomalyRandom) + (Vector3.up * itemToSpawn.verticalOffset);
+            Vector3 position = randomScrapSpawn.transform.position + (Vector3.up * 0.5f);
+            GrabbableObject grabbableObject = LFCObjectsManager.SpawnObjectForServer(itemToSpawn.spawnPrefab, position);
+            if (grabbableObject is not UpsideDownObject)
+                StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), true);
+            LFCNetworkManager.Instance.SetScrapValueEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), value);
 
-        Vector3 position = randomScrapSpawn.transform.position + (Vector3.up * 0.5f);
-        GrabbableObject grabbableObject = LFCObjectsManager.SpawnObjectForServer(itemToSpawn.spawnPrefab, position);
-        StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>());
-        LFCNetworkManager.Instance.SetScrapValueEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), value);
+            return grabbableObject;
+        }
+        return null;
+    }
 
-        return grabbableObject;
+    [HarmonyPatch(typeof(RoundManager), nameof(RoundManager.ResetEnemyTypesSpawnedCounts))]
+    [HarmonyPostfix]
+    private static void ResetEnemyTypesSpawnedCounts(RoundManager __instance)
+    {
+        foreach (KeyValuePair<EnemyType, int> upsideDownEnemy in StrangerThings.upsideDownEnemies)
+        {
+            EnemyType enemyType = upsideDownEnemy.Key;
+            enemyType.numberSpawned = 0;
+            foreach (EnemyAI enemy in __instance.SpawnedEnemies)
+            {
+                if (enemy.enemyType == enemyType)
+                    enemyType.numberSpawned++;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(RoundManager), nameof(RoundManager.PlayRandomClip))]
+    [HarmonyPrefix]
+    private static bool PlayRandomClip(AudioSource audioSource)
+    {
+        GameObject audioObj = audioSource?.gameObject;
+        if (audioObj == null) return true;
+
+        GameObject player = LFCUtilities.LocalPlayer?.gameObject;
+        if (player == null) return true;
+
+        if (audioObj.TryGetComponentInParent(out EnemyAI enemyAI))
+            return DimensionRegistry.AreInSameDimension(enemyAI.gameObject, player);
+
+        if (audioObj.TryGetComponentInParent(out GrabbableObject grabbableObject))
+            return DimensionRegistry.AreInSameDimension(grabbableObject.gameObject, player);
+
+        // Pas un ennemi / pas un objet
+        return true;
     }
 }

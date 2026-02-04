@@ -21,11 +21,11 @@ public class CrustapikanAI : UpsideDownEnemyAI
     public AudioClip[] CrustapikanSounds = Array.Empty<AudioClip>();
 
     public float footstepTimer = 0f;
-    public float lookTimer = 0f;
-    public float callTimer = 0f;
+    public float lookTimer = 10f;
+    public float callTimer = 30f;
     public float grabTimer = 0f;
 
-    public float lookCooldown = 30f;
+    public float lookCooldown = 20f;
     public float callCooldown = 60f;
     public float grabCooldown = 20f;
 
@@ -42,42 +42,27 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
     public RockProjectile rockProjectile;
     public Vector3 lastSeenPosition;
-    public List<UpsideDownEnemyAI> syncedEnemies = [];
-    public List<UpsideDownEnemyAI> spawnedEnemies = [];
 
-    public enum State
-    {
-        WANDERING,
-        SYNCING,
-        CHASING,
-        CALLING,
-        CARRYING
-    }
+    public enum State { WANDERING, CHASING, CARRYING }
+    public enum Sound { SMASH, ROAR, GRAB, THROW, SWING }
 
-    public enum Sound
+    public override void CancelActionsForServer()
     {
-        CALL,
-        SMASH,
-        SEND,
-        GRAB,
-        THROW,
-        SWING
-    }
-
-    public override void ForceSync()
-    {
-        if (currentBehaviourStateIndex == (int)State.WANDERING)
+        if (LFCUtilities.IsServer)
         {
-            canCall = false;
-            StopSearch(currentSearch);
-            SwitchToBehaviourClientRpc((int)State.SYNCING);
+            CancelLookCoroutine();
+            CancelGrabCoroutine();
+            CancelSwingCoroutine();
+            CancelCallCoroutine();
+            CancelThrowCoroutine();
         }
     }
 
     public override void ForceSend()
     {
-        if (currentBehaviourStateIndex == (int)State.WANDERING || currentBehaviourStateIndex == (int)State.SYNCING)
+        if (currentBehaviourStateIndex == (int)State.WANDERING)
         {
+            StopSearch(currentSearch);
             SetMovingTowardsTargetPlayer(syncedTarget);
             SwitchToBehaviourClientRpc((int)State.CHASING);
         }
@@ -87,7 +72,6 @@ public class CrustapikanAI : UpsideDownEnemyAI
     {
         base.Start();
 
-        callDistance = 40f;
         currentBehaviourStateIndex = (int)State.WANDERING;
         StartSearch(transform.position);
     }
@@ -99,13 +83,13 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
         PlayFootstepSound();
         int state = currentBehaviourStateIndex;
-        if (targetPlayer != null && (state == (int)State.CHASING || state == (int)State.CALLING || state == (int)State.CARRYING))
+        if (targetPlayer != null && (state == (int)State.CHASING || state == (int)State.CARRYING))
         {
             TurnCompass.LookAt(targetPlayer.gameplayCamera.transform.position);
             transform.rotation = Quaternion.Lerp(transform.rotation, Quaternion.Euler(new Vector3(0f, TurnCompass.eulerAngles.y, 0f)), 4f * Time.deltaTime);
         }
         LFCUtilities.UpdateTimer(ref lookTimer, lookCooldown, !canLook, () => canLook = true);
-        LFCUtilities.UpdateTimer(ref callTimer, callCooldown, !canCall && state != (int)State.CALLING, () => canCall = true);
+        LFCUtilities.UpdateTimer(ref callTimer, callCooldown, !canCall, () => canCall = true);
         LFCUtilities.UpdateTimer(ref grabTimer, grabCooldown, !canGrab, () => canGrab = true);
     }
 
@@ -134,11 +118,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
     public IEnumerator StunCoroutine()
     {
-        CancelLookCoroutine();
-        CancelGrabCoroutine();
-        CancelSwingCoroutine();
-        CancelCallCoroutine();
-        CancelThrowCoroutine();
+        CancelActionsForServer();
 
         agent.speed = 0f;
         DoAnimationEveryoneRpc("startStun");
@@ -166,13 +146,11 @@ public class CrustapikanAI : UpsideDownEnemyAI
         base.DoAIInterval();
         if (isEnemyDead || StartOfRound.Instance.allPlayersDead || stunCoroutine != null) return;
 
-        switch (currentBehaviourStateIndex)
+        switch ((State)currentBehaviourStateIndex)
         {
-            case (int)State.WANDERING: DoWandering(); break;
-            case (int)State.SYNCING: DoSyncing(); break;
-            case (int)State.CHASING: DoChasing(); break;
-            case (int)State.CALLING: DoCalling(); break;
-            case (int)State.CARRYING: DoCarrying(); break;
+            case State.WANDERING: DoWandering(); break;
+            case State.CHASING: DoChasing(); break;
+            case State.CARRYING: DoCarrying(); break;
         }
     }
 
@@ -181,7 +159,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
         if (lookCoroutine != null) return;
 
         agent.speed = 3f;
-        if (this.FoundClosestPlayerInRange(35, 10))
+        if (this.FoundClosestPlayerInRange(35, 10, cannotBeInShip: true))
         {
             canCall = true;
             StopSearch(currentSearch);
@@ -204,7 +182,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
         IEnumerator waitForLook = this.WaitForFullAnimation("look");
         while (waitForLook.MoveNext())
         {
-            if (this.FoundClosestPlayerInRange(50, 15, 90f))
+            if (this.FoundClosestPlayerInRange(50, 15, 90f, cannotBeInShip: true))
             {
                 DoAnimationEveryoneRpc("startMove");
                 SwitchToBehaviourClientRpc((int)State.CHASING);
@@ -230,35 +208,21 @@ public class CrustapikanAI : UpsideDownEnemyAI
         }
     }
 
-    public void DoSyncing()
-    {
-        if (caller == null || caller.isEnemyDead)
-        {
-            RemoveCaller();
-            StartSearch(transform.position);
-            SwitchToBehaviourClientRpc((int)State.WANDERING);
-        }
-        agent.speed = Vector3.Distance(transform.position, caller.transform.position) < 10f ? 2f : 4f;
-        _ = SetDestinationToPosition(caller.transform.position);
-    }
-
     public void DoChasing()
     {
-        if (swingCoroutine != null || grabCoroutine != null) return;
+        if (swingCoroutine != null || callCoroutine != null || grabCoroutine != null) return;
 
         agent.speed = 4f;
-        float distanceWithPlayer = Vector3.Distance(transform.position, targetPlayer.transform.position);
-        if (!this.TargetClosestPlayerInAnyCase() || (distanceWithPlayer > 50f && !CheckLineOfSightForPosition(targetPlayer.transform.position)))
+        if (!this.TargetClosestPlayerInAnyCase(out float distanceWithPlayer, cannotBeInShip: true) || (!isSynced && distanceWithPlayer > 50f && !CheckLineOfSightForPosition(targetPlayer.transform.position)))
         {
             StartSearch(transform.position);
             SwitchToBehaviourClientRpc((int)State.WANDERING);
             return;
         }
-        if (canCall && syncedEnemies.Count == 0)
+        if (canCall)
         {
             canCall = false;
-            canGrab = false;
-            SwitchToBehaviourClientRpc((int)State.CALLING);
+            callCoroutine ??= StartCoroutine(CallCoroutine());
             return;
         }
         if (canGrab && distanceWithPlayer >= 15f && CheckLineOfSightForPosition(targetPlayer.transform.position))
@@ -271,71 +235,52 @@ public class CrustapikanAI : UpsideDownEnemyAI
         SetMovingTowardsTargetPlayer(targetPlayer);
     }
 
-    public void DoCalling()
-    {
-        callCoroutine ??= StartCoroutine(CallCoroutine());
-        SetMovingTowardsTargetPlayer(targetPlayer);
-    }
-
     public IEnumerator CallCoroutine()
     {
         agent.speed = 0f;
-        PlayAudioEveryoneRpc((int)Sound.CALL);
-        DoAnimationEveryoneRpc("startCall");
-        yield return this.WaitForFullAnimation("call");
+        DoAnimationEveryoneRpc("startSmash");
+        yield return new WaitForSeconds(2.15f);
 
+        PlayAudioEveryoneRpc((int)Sound.SMASH);
+        PlayParticleEveryoneRpc($"{LegaFusionCore.LegaFusionCore.modName}{LegaFusionCore.LegaFusionCore.groundParticle.name}", transform.position + transform.forward, Quaternion.identity, scaleFactor: 0.5f);
+        yield return this.WaitForFullAnimation("smash");
+
+        HashSet<UpsideDownEnemyAI> syncedEnemies = [];
         foreach (Collider hitCollider in Physics.OverlapSphere(transform.position, 100f, 524288, QueryTriggerInteraction.Collide))
         {
             EnemyAI enemy = hitCollider.GetComponent<EnemyAICollisionDetect>()?.mainScript;
             if (enemy == null || enemy == this || enemy.isEnemyDead || !DimensionRegistry.AreInSameDimension(gameObject, enemy.gameObject)) continue;
-            if (enemy is not UpsideDownEnemyAI upsideDownEnemy || Vector3.Distance(upsideDownEnemy.transform.position, transform.position) > upsideDownEnemy.callDistance) continue;
+            if (enemy is not UpsideDownEnemyAI upsideDownEnemy || Vector3.Distance(upsideDownEnemy.transform.position, transform.position) > upsideDownEnemy.syncDistance) continue;
 
-            upsideDownEnemy.SetCaller(this, targetPlayer);
-            upsideDownEnemy.ForceSync();
+            upsideDownEnemy.SetSyncedTarget(targetPlayer);
+            _ = syncedEnemies.Add(upsideDownEnemy);
         }
 
-        // Si pas d'ennemi aux alentours, faire une invocation
-        if (syncedEnemies.Count == 0)
+        UpsideDownEnemyAI crustopikanLarvaeEnemy = SpawnEnemyForServer(StrangerThings.crustopikanLarvaeType, transform.position, 5f);
+        if (crustopikanLarvaeEnemy != null)
         {
-            DoAnimationEveryoneRpc("startSmash");
-            yield return new WaitForSeconds(2.15f);
-
-            PlayAudioEveryoneRpc((int)Sound.SMASH);
-            LFCNetworkManager.Instance.PlayParticleEveryoneRpc($"{LegaFusionCore.LegaFusionCore.modName}{LegaFusionCore.LegaFusionCore.groundParticle.name}", transform.position + transform.forward, Quaternion.identity, 0.5f);
-            yield return this.WaitForFullAnimation("smash");
-
-            for (int i = 0; i < 2; i++)
-            {
-                UpsideDownEnemyAI upsideDownEnemy = SpawnEnemyForServer(StrangerThings.crustopikanLarvaeType, transform.position, 5f);
-                if (upsideDownEnemy != null)
-                {
-                    upsideDownEnemy.SetCaller(this, targetPlayer);
-                    upsideDownEnemy.ForceSync();
-                }
-            }
-            yield return null;
+            crustopikanLarvaeEnemy.SetSyncedTarget(targetPlayer);
+            _ = syncedEnemies.Add(crustopikanLarvaeEnemy);
         }
-
-        agent.speed = 2f;
-        DoAnimationEveryoneRpc("startMove");
-        yield return new WaitUntil(() => syncedEnemies.All(e => Vector3.Distance(e.transform.position, transform.position) <= 15f || e.targetPlayer != null));
 
         if (syncedEnemies.Any(e => e.targetPlayer == null))
         {
-            agent.speed = 0f;
-            PlayAudioEveryoneRpc((int)Sound.SEND);
-            DoAnimationEveryoneRpc("startSend");
-            yield return this.WaitForFullAnimation("send");
+            PlayAudioEveryoneRpc((int)Sound.ROAR);
+            DoAnimationEveryoneRpc("startRoar");
+            yield return this.WaitForFullAnimation("roar");
 
             foreach (UpsideDownEnemyAI upsideDownEnemy in syncedEnemies)
                 upsideDownEnemy.ForceSend();
         }
 
-        CleanCallers();
         DoAnimationEveryoneRpc("startMove");
         SwitchToBehaviourClientRpc((int)State.CHASING);
         callCoroutine = null;
     }
+
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void PlayParticleEveryoneRpc(string tag, Vector3 position, Quaternion rotation, float scaleFactor)
+        => LFCGlobalManager.PlayParticle(tag, position, rotation, scaleFactor, DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject));
 
     public void CancelCallCoroutine()
     {
@@ -343,18 +288,8 @@ public class CrustapikanAI : UpsideDownEnemyAI
         {
             StopCoroutine(callCoroutine);
             callCoroutine = null;
-            CleanCallers();
-            canCall = true;
-            callTimer = 0f;
             SwitchToBehaviourClientRpc((int)State.CHASING);
         }
-    }
-
-    public void CleanCallers()
-    {
-        foreach (UpsideDownEnemyAI upsideDownEnemy in syncedEnemies.ToList())
-            upsideDownEnemy.RemoveCaller();
-        RemoveCaller();
     }
 
     public IEnumerator GrabCoroutine()
@@ -385,7 +320,10 @@ public class CrustapikanAI : UpsideDownEnemyAI
     public void SpawnRockEveryoneRpc(NetworkObjectReference obj)
     {
         if (obj.TryGet(out NetworkObject networkObject))
+        {
             networkObject.transform.SetParent(GrabPoint, true);
+            DimensionRegistry.SetInUpsideDown(networkObject.gameObject, true);
+        }
     }
 
     public void CancelGrabCoroutine()
@@ -410,11 +348,11 @@ public class CrustapikanAI : UpsideDownEnemyAI
             return;
         }
         agent.speed = 4f;
-        float distanceWithPlayer = Vector3.Distance(transform.position, targetPlayer.transform.position);
-        lastSeenPosition = targetPlayer != null && distanceWithPlayer <= 40f
+        bool hasTarget = this.TargetClosestPlayerInAnyCase(out float distanceWithPlayer);
+        lastSeenPosition = hasTarget && distanceWithPlayer <= 60f
             ? targetPlayer.transform.position
             : lastSeenPosition != Vector3.zero ? lastSeenPosition : transform.position;
-        if (!this.TargetClosestPlayerInAnyCase()
+        if (!hasTarget
             || Vector3.Distance(transform.position, lastSeenPosition) <= 40f
             || (distanceWithPlayer > 60f && !CheckLineOfSightForPosition(targetPlayer.transform.position)))
         {
@@ -457,15 +395,12 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
     public UpsideDownEnemyAI SpawnEnemyForServer(EnemyType enemyType, Vector3 position, float radius)
     {
-        _ = spawnedEnemies.RemoveAll(e => e == null || e.isEnemyDead);
-        if (spawnedEnemies.Count < 3 && this.TryGetSafeRandomNavMeshPosition(position, radius, out Vector3 spawnPosition))
+        if (this.TryGetSafeRandomNavMeshPosition(position, radius, out Vector3 spawnPosition) && UnityEngine.Random.Range(minInclusive: 0, maxExclusive: 100) < 75)
         {
             GameObject gameObject = Instantiate(enemyType.enemyPrefab, spawnPosition, Quaternion.identity);
-            gameObject.GetComponentInChildren<NetworkObject>().Spawn(true);
-
-            UpsideDownEnemyAI upsideDownEnemy = gameObject.GetComponentInChildren<UpsideDownEnemyAI>();
-            spawnedEnemies.Add(upsideDownEnemy);
-            return upsideDownEnemy;
+            NetworkObject networkObject = gameObject.GetComponentInChildren<NetworkObject>();
+            networkObject.Spawn(destroyWithScene: true);
+            return gameObject.GetComponentInChildren<UpsideDownEnemyAI>();
         }
         return null;
     }
@@ -517,7 +452,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
     public override void KillEnemy(bool destroy = false)
     {
-        RemoveCaller();
+        CancelActionsForServer();
         base.KillEnemy(destroy);
     }
 

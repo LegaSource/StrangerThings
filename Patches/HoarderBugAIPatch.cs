@@ -13,11 +13,10 @@ public class HoarderBugAIPatch
     [HarmonyPostfix]
     private static void RefreshGrabbableObjects()
     {
-        List<GameObject> gObjects = LFCSpawnRegistry.GetAllAs<GrabbableObject>()
-            .Where(g => DimensionRegistry.IsInUpsideDown(g.gameObject))
-            .Select(g => g.gameObject)
-            .ToList();
-        _ = HoarderBugAI.grabbableObjectsInMap.RemoveAll(gObjects.Contains);
-        _ = HoarderBugAI.HoarderBugItems.RemoveAll(h => gObjects.Contains(h.itemGrabbableObject.gameObject));
+        HashSet<GameObject> gObjects = new HashSet<GameObject>(LFCSpawnRegistry.GetAllAs<GrabbableObject>()
+            .Where(g => g != null && DimensionRegistry.IsInUpsideDown(g.gameObject))
+            .Select(g => g.gameObject));
+        _ = HoarderBugAI.grabbableObjectsInMap.RemoveAll(g => g == null || gObjects.Contains(g));
+        _ = HoarderBugAI.HoarderBugItems.RemoveAll(h => h == null || h.itemGrabbableObject == null || gObjects.Contains(h.itemGrabbableObject.gameObject));
     }
 }

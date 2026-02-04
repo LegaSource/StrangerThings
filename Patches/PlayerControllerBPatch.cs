@@ -7,6 +7,7 @@ using StrangerThings.Registries;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace StrangerThings.Patches;
 
@@ -18,7 +19,7 @@ public class PlayerControllerBPatch
 
     [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.ConnectClientToPlayerObject))]
     [HarmonyPostfix]
-    private static void StartPlayer(ref PlayerControllerB __instance)
+    private static void StartPlayer(PlayerControllerB __instance)
     {
         if (LFCUtilities.ShouldBeLocalPlayer(__instance))
         {
@@ -28,8 +29,16 @@ public class PlayerControllerBPatch
     }
 
     [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.Update))]
+    [HarmonyPrefix]
+    private static void PreUpdatePlayer(PlayerControllerB __instance, bool ___isCameraDisabled, bool ___isPlayerControlled, bool ___isHostPlayerObject, bool ___isTestingPlayer)
+    {
+        if (___isCameraDisabled && ((__instance.IsOwner && ___isPlayerControlled && (!__instance.IsServer || ___isHostPlayerObject)) || ___isTestingPlayer) && DimensionRegistry.IsInUpsideDown(__instance.gameObject))
+            DimensionRegistry.SetInUpsideDown(LFCUtilities.LocalPlayer.gameObject, false);
+    }
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.Update))]
     [HarmonyPostfix]
-    private static void UpdatePlayer(ref PlayerControllerB __instance)
+    private static void PostUpdatePlayer(PlayerControllerB __instance)
     {
         if (LFCUtilities.ShouldBeLocalPlayer(__instance))
         {
@@ -67,11 +76,58 @@ public class PlayerControllerBPatch
         }
     }
 
-    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.KillPlayer))]
-    [HarmonyPostfix]
-    private static void KillPlayer(ref PlayerControllerB __instance)
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.SetHoverTipAndCurrentInteractTrigger))]
+    [HarmonyPrefix]
+    private static bool SetHoverTipMirrorFusion(PlayerControllerB __instance)
+        => !DimensionRegistry.IsInUpsideDown(__instance.gameObject) || string.IsNullOrEmpty(__instance.cursorTip.text) || !__instance.cursorTip.text.Equals(Constants.MIRROR_FUSION);
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.Interact_performed))]
+    [HarmonyPrefix]
+    private static bool MirrorFusionActivate(PlayerControllerB __instance, ref InputAction.CallbackContext context)
     {
-        if (DimensionRegistry.IsInUpsideDown(__instance.gameObject))
-            DimensionRegistry.SetUpsideDown(__instance.gameObject, false);
+        if (!context.performed
+            || !LFCUtilities.ShouldBeLocalPlayer(__instance)
+            || !DimensionRegistry.IsInUpsideDown(__instance.gameObject)
+            || __instance.isPlayerDead
+            || !__instance.isPlayerControlled
+            || __instance.isGrabbingObjectAnimation
+            || __instance.inSpecialMenu
+            || __instance.quickMenuManager.isMenuOpen)
+        {
+            return true;
+        }
+
+        GrabbableObject grabbableObject = __instance.currentlyHeldObjectServer;
+        if (grabbableObject != null && grabbableObject.gameObject.TryGetComponentInChildren(out UpsideDownMirrorBehaviour behaviour) && behaviour.canFusion)
+        {
+            behaviour.CompleteFusionServerRpc();
+            return false;
+        }
+
+        return true;
+    }
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.KillPlayerClientRpc))]
+    [HarmonyPostfix]
+    private static void KillPlayerForClients(PlayerControllerB __instance)
+    {
+        if (LFCUtilities.LocalPlayer != __instance && DimensionRegistry.IsInUpsideDown(__instance.gameObject))
+            DimensionRegistry.SetInUpsideDown(__instance.gameObject, false);
+    }
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.SpectateNextPlayer))]
+    [HarmonyPostfix]
+    private static void SwitchSpectatedPlayer(PlayerControllerB __instance)
+    {
+        if (__instance.spectatedPlayerScript != null && !DimensionRegistry.AreInSameDimension(__instance.spectatedPlayerScript.gameObject, __instance.gameObject))
+            DimensionRegistry.SetInUpsideDown(__instance.gameObject, DimensionRegistry.IsInUpsideDown(__instance.spectatedPlayerScript.gameObject));
+    }
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.ResetZAndXRotation))]
+    [HarmonyPostfix]
+    private static void ResetZAndXRotation(PlayerControllerB __instance)
+    {
+        if (LFCUtilities.LocalPlayer != __instance && !DimensionRegistry.AreInSameDimension(LFCUtilities.LocalPlayer?.gameObject, __instance.gameObject))
+            DimensionRegistry.UpdateVisibilityState(__instance.gameObject);
     }
 }

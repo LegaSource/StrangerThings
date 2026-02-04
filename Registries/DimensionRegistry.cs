@@ -4,101 +4,49 @@ using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.MapObjects;
 using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Managers;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using TMPro;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.ProBuilder;
 using static LegaFusionCore.Registries.LFCShipFeatureRegistry;
 
 namespace StrangerThings.Registries;
 
 public class DimensionRegistry : MonoBehaviour
 {
-    public static HashSet<UpsideDownPortal> upsideDownPortals = [];
     private static readonly HashSet<GameObject> upsideDownEntities = [];
-    private static readonly Dictionary<GameObject, EntityState> visibilityStates = [];
 
-    public static void SpawnPortalsForServer()
+    public static GameObject GetUpsideDownEntity(GameObject entity)
     {
-        if (!LFCUtilities.IsServer || upsideDownPortals.Count >= 4) return;
+        _ = upsideDownEntities.RemoveWhere(e => e == null);
+        return upsideDownEntities.FirstOrDefault(e => e == entity);
+    }
 
-        const float minDistance = 50f;
-        List<Vector3> selectedPositions = [];
-        StartOfRound.Instance.allPlayerScripts.Where(p => !p.isPlayerDead).ToList().ForEach(p => selectedPositions.Add(p.transform.position));
-
-        LFCUtilities.Shuffle(RoundManager.Instance.outsideAINodes);
-        LFCUtilities.Shuffle(RoundManager.Instance.insideAINodes);
-
-        // Garantir au moins un portail à l'intérieur et à l'extérieur
-        List<bool> portalTypes = [true, false];
-        while (portalTypes.Count < 10)
-            portalTypes.Add(Random.value > 0.5f);
-
-        foreach (bool isOutside in portalTypes)
+    public static bool CanSetInUpsideDown(GameObject entity, bool isInUpsideDown)
+    {
+        PlayerControllerB player = LFCUtilities.GetSafeComponent<PlayerControllerB>(entity);
+        if (player != null && !player.isPlayerDead && !isInUpsideDown)
         {
-            float maxDistance = float.MinValue;
-            Vector3 bestPosition = Vector3.zero;
-            GameObject lastNodeSaved = null;
-
-            List<GameObject> nodes = (isOutside ? RoundManager.Instance.outsideAINodes : RoundManager.Instance.insideAINodes).ToList();
-            float radius = isOutside ? 10f : 2f;
-
-            foreach (GameObject node in nodes)
+            // Checks pour savoir si le joueur peut quitter l'Upside Down
+            foreach (UpsideDownPortal upsideDownPortal in MapObjectsManager.GetUpsideDownPortals())
             {
-                Vector3 candidatePosition = RoundManager.Instance.GetRandomNavMeshPositionInBoxPredictable(node.transform.position, radius, default, new System.Random()) + Vector3.up;
-                if (!Physics.Raycast(candidatePosition, Vector3.down, out RaycastHit hit, 5f, StartOfRound.Instance.collidersAndRoomMaskAndDefault)) continue;
-
-                Vector3 validPosition = hit.point;
-
-                // Calculer la distance minimale avec les positions sélectionnées
-                float minDistanceToSelected = selectedPositions.Count > 0
-                    ? selectedPositions.Min(p => Vector3.Distance(p, validPosition))
-                    : float.MaxValue;
-
-                // Garder la position la plus éloignée des autres sélectionnées
-                if (minDistanceToSelected > minDistance || minDistanceToSelected > maxDistance)
+                if (upsideDownPortal.corruptedPlayer == player)
                 {
-                    maxDistance = minDistanceToSelected;
-                    bestPosition = validPosition;
-                    lastNodeSaved = node;
-
-                    if (minDistanceToSelected > minDistance) break;
+                    if (LFCUtilities.ShouldBeLocalPlayer(player))
+                        HUDManager.Instance.DisplayTip("Impossible action", "You have been corrupted. You must find another way out.");
+                    return false;
                 }
             }
-
-            if (bestPosition != Vector3.zero)
-            {
-                selectedPositions.Add(bestPosition);
-                _ = nodes.Remove(lastNodeSaved);
-
-                SpawnUpsideDownPortalForServer(bestPosition, isOutside);
-            }
         }
+        return isInUpsideDown ? upsideDownEntities.Add(entity) : upsideDownEntities.Remove(entity);
     }
 
-    public static void SpawnUpsideDownPortalForServer(Vector3 position, bool isOutside)
+    public static void SetInUpsideDown(GameObject entity, bool isInUpsideDown)
     {
-        GameObject gameObject = Instantiate(StrangerThings.upsideDownPortal, position + (Vector3.down * 0.1f), Quaternion.identity, RoundManager.Instance.mapPropsContainer.transform);
-        gameObject.GetComponent<NetworkObject>().Spawn(true);
-        gameObject.GetComponent<UpsideDownPortal>().InitializeEveryoneRpc(isOutside);
-    }
-
-    private class EntityState
-    {
-        public HashSet<Renderer> disabledRenderers = [];
-        public HashSet<Light> disabledLights = [];
-        public HashSet<Collider> disabledColliders = [];
-        public HashSet<TextMeshProUGUI> disabledTextMeshes = [];
-        public HashSet<ScanNodeProperties> disabledScanNodes = [];
-        public HashSet<InteractTrigger> disabledTriggers = [];
-        public HashSet<ParticleSystem> disabledParticles = [];
-        public Dictionary<AudioSource, float> audioVolumes = [];
-    }
-
-    public static void SetUpsideDown(GameObject entity, bool isInUpsideDown)
-    {
-        _ = isInUpsideDown ? upsideDownEntities.Add(entity) : upsideDownEntities.Remove(entity);
+        if (LFCUtilities.LocalPlayer == null || entity == null || !CanSetInUpsideDown(entity, isInUpsideDown))
+            return;
 
         PlayerControllerB player = LFCUtilities.GetSafeComponent<PlayerControllerB>(entity);
         if (player != null)
@@ -113,6 +61,11 @@ public class DimensionRegistry : MonoBehaviour
             }
             else
             {
+                if (LFCUtilities.LocalPlayer.isPlayerDead && LFCUtilities.LocalPlayer.spectatedPlayerScript == player)
+                {
+                    SetInUpsideDown(LFCUtilities.LocalPlayer.gameObject, isInUpsideDown);
+                    return;
+                }
                 UpdateVisibilityState(player.gameObject);
                 UpdateFlickeringFlashlights(player);
             }
@@ -123,8 +76,9 @@ public class DimensionRegistry : MonoBehaviour
 
         UpdateVisibilityState(entity);
     }
-    public static bool IsInUpsideDown(GameObject entity) => upsideDownEntities.Contains(entity);
-    public static bool AreInSameDimension(GameObject a, GameObject b) => IsInUpsideDown(a) == IsInUpsideDown(b);
+    public static bool IsInUpsideDown(GameObject entity) => entity != null && GetUpsideDownEntity(entity);
+    public static bool AreInSameDimension(GameObject a, GameObject b)
+        => a == null || b == null || IsBlacklisted(a) || IsBlacklisted(b) || IsInUpsideDown(a) == IsInUpsideDown(b);
 
     public static void RefreshStatesForLocalClient()
     {
@@ -133,33 +87,37 @@ public class DimensionRegistry : MonoBehaviour
             if (networkBehaviour.IsSpawned && IsWhitelisted(networkBehaviour.gameObject))
                 UpdateVisibilityState(networkBehaviour.gameObject);
         }
-
-        foreach (SandSpiderWebTrap webTrap in FindObjectsOfType<SandSpiderWebTrap>(true))
-            UpdateVisibilityState(webTrap.gameObject);
-
-        foreach (DeadBodyInfo deadBodyInfo in FindObjectsOfType<DeadBodyInfo>(true))
-            UpdateVisibilityState(deadBodyInfo.gameObject);
-
         foreach (GrabbableObject grabbableObject in LFCSpawnRegistry.GetAllAs<GrabbableObject>())
         {
-            if (GameNetworkManager.Instance.localPlayerController.ItemSlots.Contains(grabbableObject))
-                StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>());
+            if (LFCUtilities.LocalPlayer.ItemSlots.Contains(grabbableObject))
+                StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), !IsInUpsideDown(grabbableObject.gameObject));
             else
                 UpdateVisibilityState(grabbableObject.gameObject);
         }
-
         foreach (PlayerControllerB player in StartOfRound.Instance.allPlayerScripts)
         {
             if (LFCUtilities.ShouldNotBeLocalPlayer(player))
                 UpdateVisibilityState(player.gameObject);
         }
+        foreach (SandSpiderWebTrap webTrap in FindObjectsOfType<SandSpiderWebTrap>(true))
+            UpdateVisibilityState(webTrap.gameObject);
+        foreach (DeadBodyInfo deadBodyInfo in FindObjectsOfType<DeadBodyInfo>(true))
+            UpdateVisibilityState(deadBodyInfo.gameObject);
+    }
+
+    public static void UpdateVisibilityState(GameObject entity)
+    {
+        if (AreInSameDimension(LFCUtilities.LocalPlayer?.gameObject, entity))
+            LFCVisibilityRegistry.Restore(entity, $"{StrangerThings.modName}Dimension");
+        else
+            LFCVisibilityRegistry.Hide(entity, $"{StrangerThings.modName}Dimension");
     }
 
     private static void UpdateLightsVisibilityForLocalClient()
     {
         foreach (Animator poweredLight in RoundManager.Instance.allPoweredLightsAnimators)
         {
-            if (IsInUpsideDown(GameNetworkManager.Instance.localPlayerController.gameObject))
+            if (IsInUpsideDown(LFCUtilities.LocalPlayer.gameObject))
                 LFCPoweredLightsRegistry.AddLock(poweredLight, StrangerThings.modName);
             else
                 LFCPoweredLightsRegistry.RemoveLock(poweredLight, StrangerThings.modName);
@@ -168,7 +126,7 @@ public class DimensionRegistry : MonoBehaviour
 
     private static void UpdateShipFeaturesForLocalClient()
     {
-        if (IsInUpsideDown(GameNetworkManager.Instance.localPlayerController.gameObject))
+        if (IsInUpsideDown(LFCUtilities.LocalPlayer.gameObject))
         {
             AddLock(ShipFeatureType.SHIP_LIGHTS, StrangerThings.modName);
             AddLock(ShipFeatureType.MAP_SCREEN, StrangerThings.modName);
@@ -178,115 +136,10 @@ public class DimensionRegistry : MonoBehaviour
             AddLock(ShipFeatureType.ITEM_CHARGER, StrangerThings.modName);
             AddLock(ShipFeatureType.SHIP_TV, StrangerThings.modName);
             AddLock(ShipFeatureType.SHIP_TELEPORTERS, StrangerThings.modName);
+            AddLock(ShipFeatureType.SMART_CUPBOARD, StrangerThings.modName);
             return;
         }
         ClearLocks(StrangerThings.modName);
-    }
-
-    public static void UpdateVisibilityState(GameObject entity)
-    {
-        if (AreInSameDimension(GameNetworkManager.Instance.localPlayerController.gameObject, entity))
-            Restore(entity);
-        else
-            Hide(entity);
-    }
-
-    private static void Hide(GameObject entity)
-    {
-        if (!visibilityStates.TryGetValue(entity, out EntityState state))
-        {
-            state = new EntityState();
-            visibilityStates[entity] = state;
-        }
-
-        foreach (Renderer renderer in entity.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer.enabled)
-            {
-                renderer.enabled = false;
-                _ = state.disabledRenderers.Add(renderer);
-            }
-        }
-        foreach (Light light in entity.GetComponentsInChildren<Light>(true))
-        {
-            if (light.enabled)
-            {
-                light.enabled = false;
-                _ = state.disabledLights.Add(light);
-            }
-        }
-        foreach (Collider collider in entity.GetComponentsInChildren<Collider>(true))
-        {
-            if (collider.enabled)
-            {
-                collider.enabled = false;
-                _ = state.disabledColliders.Add(collider);
-            }
-        }
-        foreach (TextMeshProUGUI textMesh in entity.GetComponentsInChildren<TextMeshProUGUI>(true))
-        {
-            if (textMesh.enabled)
-            {
-                textMesh.enabled = false;
-                _ = state.disabledTextMeshes.Add(textMesh);
-            }
-        }
-        foreach (ScanNodeProperties scanNode in entity.GetComponentsInChildren<ScanNodeProperties>(true))
-        {
-            if (scanNode.enabled && scanNode.TryGetComponent(out Collider collider))
-            {
-                collider.enabled = false;
-                _ = state.disabledScanNodes.Add(scanNode);
-            }
-        }
-        foreach (InteractTrigger interactTrigger in entity.GetComponentsInChildren<InteractTrigger>(true))
-        {
-            if (interactTrigger.enabled && interactTrigger.TryGetComponent(out Collider collider))
-            {
-                collider.enabled = false;
-                _ = state.disabledTriggers.Add(interactTrigger);
-            }
-        }
-        foreach (ParticleSystem particle in entity.GetComponentsInChildren<ParticleSystem>(true))
-        {
-            if (particle.isPlaying)
-            {
-                particle.Stop();
-                _ = state.disabledParticles.Add(particle);
-            }
-        }
-        foreach (AudioSource audioSource in entity.GetComponentsInChildren<AudioSource>(true))
-        {
-            if (audioSource.volume > 0f)
-            {
-                state.audioVolumes[audioSource] = audioSource.volume;
-                audioSource.volume = 0f;
-            }
-        }
-    }
-
-    private static void Restore(GameObject entity)
-    {
-        if (!visibilityStates.TryGetValue(entity, out EntityState state)) return;
-
-        foreach (Renderer renderer in state.disabledRenderers)
-            if (renderer != null) renderer.enabled = true;
-        foreach (Light light in state.disabledLights)
-            if (light != null) light.enabled = true;
-        foreach (Collider collider in state.disabledColliders)
-            if (collider != null) collider.enabled = true;
-        foreach (TextMeshProUGUI textMesh in state.disabledTextMeshes)
-            if (textMesh != null) textMesh.enabled = true;
-        foreach (ScanNodeProperties scanNode in state.disabledScanNodes)
-            if (scanNode != null && scanNode.TryGetComponent(out Collider collider)) collider.enabled = true;
-        foreach (InteractTrigger interactTrigger in state.disabledTriggers)
-            if (interactTrigger != null && interactTrigger.TryGetComponent(out Collider collider)) collider.enabled = true;
-        foreach (ParticleSystem particle in state.disabledParticles)
-            particle?.Play();
-        foreach (KeyValuePair<AudioSource, float> kv in state.audioVolumes)
-            if (kv.Key) kv.Key.volume = kv.Value;
-
-        _ = visibilityStates.Remove(entity);
     }
 
     private static void UpdateFlickeringFlashlights(PlayerControllerB player)
@@ -303,27 +156,13 @@ public class DimensionRegistry : MonoBehaviour
     }
 
     public static bool IsWhitelisted(GameObject gObject)
-        => gObject != null && (gObject.TryGetComponent<EnemyAI>(out _) || ConfigManager.visibilityStateInclusions.Value.Contains(gObject.name));
-
-    public static UpsideDownPortal GetClosestPortal(Vector3 position)
-    {
-        if (upsideDownPortals == null || upsideDownPortals.Count == 0) return null;
-
-        UpsideDownPortal closest = null;
-        float closestDistance = float.MaxValue;
-
-        foreach (UpsideDownPortal portal in upsideDownPortals)
-        {
-            if (portal == null || portal.transform == null) continue;
-
-            float distance = Vector3.SqrMagnitude(portal.transform.position - position);
-            if (distance < closestDistance)
-            {
-                closestDistance = distance;
-                closest = portal;
-            }
-        }
-
-        return closest;
-    }
+        => gObject != null
+            && !IsBlacklisted(gObject)
+            && (gObject.TryGetComponent<EnemyAI>(out _)
+                || gObject.TryGetComponent<VehicleController>(out _)
+                || gObject.TryGetComponent<RockProjectile>(out _)
+                || gObject.TryGetComponent<AntennaHazard>(out _)
+                || LFCUtilities.HasNameFromList(LFCUtilities.GetGameObjectName(gObject), ConfigManager.visibilityStateInclusions.Value));
+    public static bool IsBlacklisted(GameObject gObject)
+        => gObject != null && LFCUtilities.HasNameFromList(LFCUtilities.GetGameObjectName(gObject), ConfigManager.visibilityStateExclusions.Value);
 }

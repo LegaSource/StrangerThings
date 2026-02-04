@@ -1,10 +1,12 @@
 ﻿using GameNetcodeStuff;
 using HarmonyLib;
 using LegaFusionCore.Utilities;
+using StrangerThings.Behaviours.Enemies;
 using StrangerThings.Behaviours.MapObjects;
+using StrangerThings.Managers;
 using StrangerThings.Registries;
 using System.Collections.Generic;
-using System.Linq;
+using Unity.Netcode;
 using UnityEngine;
 
 namespace StrangerThings.Patches;
@@ -15,68 +17,52 @@ public class EnemyAIPatch
     [HarmonyPostfix]
     private static void StartEnemy(ref EnemyAI __instance)
     {
-        if (LFCUtilities.IsServer && /*__instance.enemyType != null && !__instance.enemyType.isDaytimeEnemy &&*/ !DimensionRegistry.IsInUpsideDown(__instance.gameObject))
-            SpawnUpsideDownEnemy(__instance.isOutside);
+        if (LFCUtilities.IsServer && __instance is not UpsideDownEnemyAI)
+            SpawnUpsideDownEnemy(__instance.isOutside, __instance.transform.position);
     }
 
-    private static void SpawnUpsideDownEnemy(bool isOutside)
+    private static void SpawnUpsideDownEnemy(bool isOutside, Vector3 position)
     {
-        /*RoundManager rm = RoundManager.Instance;
-
-        Vector3 spawnPosition = isOutside
-            ? rm.outsideAINodes[Random.Range(0, rm.outsideAINodes.Length)].transform.position
-            : rm.insideAINodes[Random.Range(0, rm.insideAINodes.Length)].transform.position;
-        spawnPosition = rm.GetRandomNavMeshPositionInRadiusSpherical(spawnPosition);
-
-        GameObject gameObject = Object.Instantiate(StrangerThings.demogorgonEnemy.enemyPrefab, spawnPosition, Quaternion.Euler(Vector3.zero));
-        NetworkObject networkObject = gameObject.GetComponentInChildren<NetworkObject>();
-        networkObject.Spawn(destroyWithScene: true);
-        StrangerThingsNetworkManager.Instance.SetInUpsideDownEveryoneRpc(networkObject, true);*/
-
-        /*RoundManager rm = RoundManager.Instance;
-
-        EnemyType enemyType = isOutside
-            ? GetRandomEnemy(rm.currentLevel.OutsideEnemies)
-            : GetRandomEnemy(rm.currentLevel.Enemies);
-        if (enemyType == null) return;
-
-        Vector3 spawnPosition = isOutside
-            ? rm.outsideAINodes[Random.Range(0, rm.outsideAINodes.Length)].transform.position
-            : rm.insideAINodes[Random.Range(0, rm.insideAINodes.Length)].transform.position;
-        spawnPosition = rm.GetRandomNavMeshPositionInRadiusSpherical(spawnPosition);
-
-        GameObject gameObject = Object.Instantiate(enemyType.enemyPrefab, spawnPosition, Quaternion.Euler(Vector3.zero));
-        NetworkObject networkObject = gameObject.GetComponentInChildren<NetworkObject>();
-        networkObject.Spawn(destroyWithScene: true);
-        StrangerThingsNetworkManager.Instance.SetInUpsideDownEveryoneRpc(networkObject, true);
-        enemyType.numberSpawned++;*/
-    }
-
-    public static EnemyType GetRandomEnemy(List<SpawnableEnemyWithRarity> enemies)
-    {
-        List<SpawnableEnemyWithRarity> validEnemies = enemies
-            .Where(e => e.enemyType != null && e.enemyType.numberSpawned < e.enemyType.MaxCount && !e.enemyType.spawningDisabled && e.rarity > 0)
-            .ToList();
-        if (validEnemies.Count == 0) return null;
-
-        int totalWeight = validEnemies.Sum(e => e.rarity);
-        int roll = Random.Range(0, totalWeight);
-        int cumulative = 0;
-
-        foreach (SpawnableEnemyWithRarity enemy in validEnemies)
+        EnemyType enemyType = GetRandomEnemy(isOutside);
+        if (enemyType != null)
         {
-            cumulative += enemy.rarity;
-            if (roll < cumulative) return enemy.enemyType;
+            position = RoundManager.Instance.GetRandomNavMeshPositionInRadiusSpherical(position);
+            GameObject gameObject = Object.Instantiate(enemyType.enemyPrefab, position, Quaternion.identity);
+            NetworkObject networkObject = gameObject.GetComponentInChildren<NetworkObject>();
+            networkObject.Spawn(destroyWithScene: true);
+            enemyType.numberSpawned++;
+            RoundManager.Instance.SpawnedEnemies.Add(gameObject.GetComponent<EnemyAI>());
         }
+    }
 
-        return null;
+    public static EnemyType GetRandomEnemy(bool isOutside)
+    {
+        List<EnemyType> eligibleEnemies = GetEligibleEnemies(isOutside);
+        return eligibleEnemies.Count > 0 ? eligibleEnemies[new System.Random().Next(eligibleEnemies.Count)] : null;
+    }
+
+    public static List<EnemyType> GetEligibleEnemies(bool isOutside)
+    {
+        List<EnemyType> eligibleEnemies = [];
+        foreach (KeyValuePair<EnemyType, int> upsideDownEnemy in StrangerThings.upsideDownEnemies)
+        {
+            EnemyType enemyType = upsideDownEnemy.Key;
+            EnemyAI enemy = enemyType.enemyPrefab.GetComponent<EnemyAI>();
+            if (enemy != null && enemy.isOutside == isOutside && enemyType.numberSpawned < enemyType.MaxCount)
+            {
+                for (int i = 0; i < upsideDownEnemy.Value; i++)
+                    eligibleEnemies.Add(enemyType);
+            }
+        }
+        return eligibleEnemies;
     }
 
     [HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.PlayerIsTargetable))]
     [HarmonyPrefix]
     private static bool PlayerIsTargetable(ref EnemyAI __instance, ref bool __result, PlayerControllerB playerScript)
     {
-        if (!DimensionRegistry.AreInSameDimension(__instance.gameObject, playerScript.gameObject))
+        if (!DimensionRegistry.AreInSameDimension(__instance.gameObject, playerScript.gameObject)
+            && (__instance is not DemogorgonKidnapperAI demogorgon || demogorgon.currentBehaviourStateIndex != (int)DemogorgonAI.State.WANDERING))
         {
             __result = false;
             return false;
@@ -91,7 +77,7 @@ public class EnemyAIPatch
         if (!DimensionRegistry.AreInSameDimension(__instance.gameObject, __instance.targetPlayer.gameObject))
         {
             // Naviguer vers le portail le temps que le monstre perde le joueur
-            UpsideDownPortal upsideDownPortal = DimensionRegistry.GetClosestPortal(__instance.transform.position);
+            UpsideDownPortal upsideDownPortal = MapObjectsManager.GetClosestPortal(__instance.transform.position);
             if (upsideDownPortal == null) return true;
 
             __instance.destination = upsideDownPortal.transform.position;
@@ -102,7 +88,7 @@ public class EnemyAIPatch
 
     [HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.TargetClosestPlayer))]
     [HarmonyPostfix]
-    private static void PreventTargetClosestPlayer(ref EnemyAI __instance, ref bool __result)
+    private static void PreventTargetClosestPlayer(EnemyAI __instance, ref bool __result)
     {
         if (__result && __instance.targetPlayer != null && !DimensionRegistry.AreInSameDimension(__instance.gameObject, __instance.targetPlayer.gameObject))
             __result = false;
@@ -110,7 +96,7 @@ public class EnemyAIPatch
 
     [HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.CheckLineOfSightForClosestPlayer))]
     [HarmonyPostfix]
-    private static void PreventCheckLineOfSightForClosestPlayer(ref EnemyAI __instance, ref PlayerControllerB __result)
+    private static void PreventCheckLineOfSightForClosestPlayer(EnemyAI __instance, ref PlayerControllerB __result)
     {
         if (__result != null && !DimensionRegistry.AreInSameDimension(__instance.gameObject, __result.gameObject))
             __result = null;
@@ -118,7 +104,7 @@ public class EnemyAIPatch
 
     [HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.CheckLineOfSightForPlayer))]
     [HarmonyPostfix]
-    private static void PreventCheckLineOfSightForPlayer(ref EnemyAI __instance, ref PlayerControllerB __result)
+    private static void PreventCheckLineOfSightForPlayer(EnemyAI __instance, ref PlayerControllerB __result)
     {
         if (__result != null && !DimensionRegistry.AreInSameDimension(__instance.gameObject, __result.gameObject))
             __result = null;
@@ -126,7 +112,7 @@ public class EnemyAIPatch
 
     [HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.GetClosestPlayer))]
     [HarmonyPostfix]
-    private static void PreventGetClosestPlayer(ref EnemyAI __instance, ref PlayerControllerB __result)
+    private static void PreventGetClosestPlayer(EnemyAI __instance, ref PlayerControllerB __result)
     {
         if (__result != null && !DimensionRegistry.AreInSameDimension(__instance.gameObject, __result.gameObject))
             __result = null;

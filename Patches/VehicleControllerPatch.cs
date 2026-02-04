@@ -4,11 +4,11 @@ using StrangerThings.Registries;
 
 namespace StrangerThings.Patches;
 
-public class DeadBodyInfoPatch
+public class VehicleControllerPatch
 {
-    [HarmonyPatch(typeof(DeadBodyInfo), nameof(DeadBodyInfo.Awake))]
+    [HarmonyPatch(typeof(VehicleController), nameof(VehicleController.Start))]
     [HarmonyPostfix]
-    private static void AwakeDeadBodyInfo(DeadBodyInfo __instance)
+    private static void StartVehicleController(VehicleController __instance)
     {
         if (LFCUtilities.LocalPlayer != null)
             DimensionRegistry.UpdateVisibilityState(__instance.gameObject);

@@ -1,7 +1,9 @@
 ﻿using GameNetcodeStuff;
+using LegaFusionCore.Managers;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Enemies;
+using StrangerThings.Registries;
 using System.Collections;
 using Unity.Netcode;
 using UnityEngine;
@@ -89,9 +91,9 @@ public class RockProjectile : NetworkBehaviour
     public bool HandlePlayerHit(Collider other)
     {
         PlayerControllerB player = other.GetComponent<PlayerControllerB>();
-        if (player != null)
+        if (player != null && DimensionRegistry.AreInSameDimension(player.gameObject, gameObject))
         {
-            LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 80, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
+            LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 50, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
             return true;
         }
         return false;
@@ -100,12 +102,14 @@ public class RockProjectile : NetworkBehaviour
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
     public void SpawnRockExplosionEveryoneRpc()
     {
-        GameObject particleObj = Instantiate(StrangerThings.rockExplosionParticle, transform.position, Quaternion.identity);
-        ParticleSystem particleSystem = particleObj.GetComponent<ParticleSystem>();
-        Destroy(particleObj, particleSystem.main.duration + particleSystem.main.startLifetime.constantMax);
+        LFCGlobalManager.PlayParticle(tag: $"{LegaFusionCore.LegaFusionCore.modName}{LegaFusionCore.LegaFusionCore.brownExplosionParticle.name}",
+                position: transform.position,
+                rotation: Quaternion.identity,
+                scaleFactor: 2f,
+                active: DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject));
 
-        GameObject audioObject = Instantiate(StrangerThings.rockExplosionAudio, transform.position, Quaternion.identity);
-        AudioSource audioSource = audioObject.GetComponent<AudioSource>();
-        Destroy(audioObject, audioSource.clip.length);
+        LFCGlobalManager.PlayAudio(prefab: StrangerThings.rockExplosionAudio,
+            position: transform.position,
+            active: DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject));
     }
 }

@@ -1,5 +1,6 @@
 ﻿using DigitalRuby.ThunderAndLightning;
 using HarmonyLib;
+using LegaFusionCore.Utilities;
 using StrangerThings.Registries;
 using UnityEngine;
 
@@ -11,18 +12,19 @@ public class LightningBoltScriptPatch
     [HarmonyPostfix]
     private static void UpsideDownStrike(ref LightningBoltParameters __result)
     {
-        if (!DimensionRegistry.IsInUpsideDown(GameNetworkManager.Instance.localPlayerController.gameObject)) return;
+        if (DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject))
+        {
+            Color32 red = new Color32(230, 25, 25, 255);
 
-        Color32 red = new Color32(230, 25, 25, 255);
+            __result.Color = red;
+            __result.MainTrunkTintColor = red;
 
-        __result.Color = red;
-        __result.MainTrunkTintColor = red;
+            __result.Intensity = 1.6f;
+            __result.GlowIntensity = 1.4f;
+            __result.GlowWidthMultiplier = 1.2f;
 
-        __result.Intensity = 1.6f;
-        __result.GlowIntensity = 1.4f;
-        __result.GlowWidthMultiplier = 1.2f;
-
-        // Génère plus de branches à l'éclair
-        __result.Forkedness = 1.2f;
+            // Génère plus de branches à l'éclair
+            __result.Forkedness = 1.2f;
+        }
     }
 }

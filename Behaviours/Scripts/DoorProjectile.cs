@@ -1,5 +1,6 @@
 ﻿using GameNetcodeStuff;
 using LegaFusionCore.Managers.NetworkManagers;
+using LegaFusionCore.Utilities;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.AI;
@@ -15,10 +16,7 @@ public class DoorProjectile : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (hasHit) return;
-
-        PlayerControllerB player = collision.gameObject.GetComponentInParent<PlayerControllerB>();
-        if (player != null)
+        if (!hasHit && collision.gameObject.TryGetComponentInParent(out PlayerControllerB player))
         {
             hasHit = true;
             rigidbody = GetComponent<Rigidbody>();

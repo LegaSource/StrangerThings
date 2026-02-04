@@ -1,4 +1,5 @@
 ﻿using HarmonyLib;
+using LegaFusionCore.Utilities;
 using StrangerThings.Registries;
 
 namespace StrangerThings.Patches;
@@ -7,9 +8,9 @@ public class SandSpiderWebTrapPatch
 {
     [HarmonyPatch(typeof(SandSpiderWebTrap), nameof(SandSpiderWebTrap.Awake))]
     [HarmonyPostfix]
-    private static void AwakeSpiderWeb(ref SandSpiderWebTrap __instance)
+    private static void AwakeSpiderWeb(SandSpiderWebTrap __instance)
     {
-        if (GameNetworkManager.Instance?.localPlayerController != null)
+        if (LFCUtilities.LocalPlayer != null)
             DimensionRegistry.UpdateVisibilityState(__instance.gameObject);
     }
 }

@@ -1,4 +1,6 @@
-﻿using System;
+﻿using LegaFusionCore.Utilities;
+using StrangerThings.Managers;
+using System;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -46,10 +48,6 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     public float skySpeed = 0.4f;
     private float dayFactor;
 
-    // -------------------- Storm override --------------------
-    private static StormyWeather forcedStorm;
-    private static bool wasStormy;
-
     public void Awake()
     {
         if (Instance != null)
@@ -64,6 +62,7 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 
         if (!volume.profile.TryGet(out fog)) StrangerThings.mls.LogWarning("[UpsideDown] Missing Fog override in Volume.");
         if (!volume.profile.TryGet(out sky)) StrangerThings.mls.LogWarning("[UpsideDown] Missing GradientSky override in Volume.");
+        if (audioVibe != null) audioVibe.volume = ConfigManager.upsideDownVolume.Value;
 
         SetUpsideDownState(false);
     }
@@ -81,39 +80,35 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 
     private void EnableStormLogic()
     {
-        wasStormy = StartOfRound.Instance.currentLevel.currentWeather == LevelWeatherType.Stormy;
-
-        StormyWeather storm = FindObjectsByType<StormyWeather>(FindObjectsInactive.Include, FindObjectsSortMode.None)
-            .FirstOrDefault();
-
+        bool wasStormy = StartOfRound.Instance.currentLevel.currentWeather == LevelWeatherType.Stormy;
+        StormyWeather storm = FindObjectsByType<StormyWeather>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault();
         if (storm == null) return;
 
         if (isInUpsideDown)
         {
             if (!wasStormy)
-            {
                 storm.gameObject.SetActive(true);
-                forcedStorm = storm;
-            }
         }
         else
         {
-            if (!wasStormy && forcedStorm != null)
+            if (!wasStormy && storm != null)
             {
-                forcedStorm.gameObject.SetActive(false);
-                forcedStorm = null;
+                storm.staticElectricityParticle.Stop();
+                storm.staticElectricityParticle.GetComponent<AudioSource>().Stop();
+                storm.setStaticToObject = null;
             }
         }
     }
 
     private void Update()
     {
-        if (!isInUpsideDown) return;
-
-        ComputeDayFactor();
-        AnimateFog();
-        AnimateSky();
-        UpdateLightning();
+        if (isInUpsideDown)
+        {
+            ComputeDayFactor();
+            AnimateFog();
+            AnimateSky();
+            UpdateLightning();
+        }
     }
 
     // -----------------------------------------------------
@@ -121,7 +116,7 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     // -----------------------------------------------------
     public void TriggerLightning()
     {
-        if (!isInUpsideDown || GameNetworkManager.Instance.localPlayerController.isInsideFactory) return;
+        if (!isInUpsideDown || LFCUtilities.LocalPlayer == null || LFCUtilities.LocalPlayer.isInsideFactory) return;
 
         lightningActive = true;
         lightningTimer = 0f;
@@ -151,9 +146,9 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     // -----------------------------------------------------
     private void AnimateFog()
     {
-        if (fog == null) return;
+        if (LFCUtilities.LocalPlayer == null || fog == null) return;
 
-        bool inside = GameNetworkManager.Instance.localPlayerController.isInsideFactory;
+        bool inside = LFCUtilities.LocalPlayer.isInsideFactory;
         Color baseColor = inside ? indoorFog : outdoorFog;
         float t = (Mathf.Sin(Time.time * fogSpeed) * 0.5f) + 0.5f;
         Color animatedColor = Color.Lerp(
@@ -184,9 +179,9 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     // -----------------------------------------------------
     private void AnimateSky()
     {
-        if (sky == null) return;
+        if (LFCUtilities.LocalPlayer == null || sky == null) return;
 
-        bool inside = GameNetworkManager.Instance.localPlayerController.isInsideFactory;
+        bool inside = LFCUtilities.LocalPlayer.isInsideFactory;
         float cycle = (Mathf.Sin(Time.time * skySpeed) * 0.5f) + 0.5f;
         Color top = Color.Lerp(skyTopNight, skyTopDay, dayFactor);
         Color mid = Color.Lerp(skyMidNight, skyMidDay, dayFactor);
