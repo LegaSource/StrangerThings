@@ -40,39 +40,44 @@ public class PlayerControllerBPatch
     [HarmonyPostfix]
     private static void PostUpdatePlayer(PlayerControllerB __instance)
     {
+        if (RoundManager.Instance == null) return;
         if (LFCUtilities.ShouldBeLocalPlayer(__instance))
         {
             LFCUtilities.UpdateTimer(ref flickerTimer, flickerCooldown, !canFlick, () => canFlick = true);
             return;
         }
-        if (!canFlick || !DimensionRegistry.IsInUpsideDown(__instance.gameObject)) return;
 
-        canFlick = false;
-        Animator bestPoweredLight = null;
-        float bestDistance = float.MaxValue;
-        foreach (Animator poweredLight in RoundManager.Instance?.allPoweredLightsAnimators)
+        if (canFlick && DimensionRegistry.IsInUpsideDown(__instance.gameObject))
         {
-            float distance = (poweredLight.transform.position - __instance.transform.position).sqrMagnitude;
-            if (!LFCPoweredLightsRegistry.IsLocked(poweredLight) && distance <= 50f)
+            canFlick = false;
+
+            Animator bestPoweredLight = null;
+            float bestDistance = float.MaxValue;
+            foreach (Animator poweredLight in RoundManager.Instance.allPoweredLightsAnimators)
             {
-                if (distance < bestDistance)
+                float distance = (poweredLight.transform.position - __instance.transform.position).sqrMagnitude;
+                if (!LFCPoweredLightsRegistry.IsLocked(poweredLight) && distance <= 50f)
                 {
-                    bestDistance = distance;
-                    bestPoweredLight = poweredLight;
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        bestPoweredLight = poweredLight;
+                    }
                 }
             }
-        }
-        bestPoweredLight?.SetTrigger("Flicker");
+            bestPoweredLight?.SetTrigger("Flicker");
 
-        HashSet<Component> flashlights = LFCSpawnRegistry.GetSetExact<FlashlightItem>();
-        if (flashlights == null) return;
-
-        foreach (FlashlightItem flashlight in flashlights.Cast<FlashlightItem>())
-        {
-            if (!DimensionRegistry.IsInUpsideDown(flashlight.gameObject) && (flashlight.transform.position - __instance.transform.position).sqrMagnitude <= 25f)
-                LFCObjectStateRegistry.AddFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{__instance.playerUsername}");
-            else
-                LFCObjectStateRegistry.RemoveFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{__instance.playerUsername}");
+            HashSet<Component> flashlights = LFCSpawnRegistry.GetSetExact<FlashlightItem>();
+            if (flashlights != null)
+            {
+                foreach (FlashlightItem flashlight in flashlights.Cast<FlashlightItem>())
+                {
+                    if (!DimensionRegistry.IsInUpsideDown(flashlight.gameObject) && (flashlight.transform.position - __instance.transform.position).sqrMagnitude <= 25f)
+                        LFCObjectStateRegistry.AddFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{__instance.playerUsername}");
+                    else
+                        LFCObjectStateRegistry.RemoveFlickeringFlashlight(flashlight, $"{StrangerThings.modName}{__instance.playerUsername}");
+                }
+            }
         }
     }
 

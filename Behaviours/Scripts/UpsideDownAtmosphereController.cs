@@ -21,13 +21,11 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 
     private bool isInUpsideDown = false;
 
-    // -------------------- Lightning --------------------
     public Color lightningColor = new Color(1f, 0.1f, 0.1f);
     public float lightningDuration = 1.5f;
     private bool lightningActive;
     private float lightningTimer;
 
-    // -------------------- Fog Settings --------------------
     public Color outdoorFog = new Color(0.25f, 0.45f, 0.9f);
     public Color indoorFog = new Color(0.15f, 0.25f, 0.4f);
     [Range(0f, 1f)] public float fogVariation = 0.4f;
@@ -37,7 +35,6 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     public float densityVariation = 0.6f;
     public float densitySpeed = 0.5f;
 
-    // -------------------- Sky Settings --------------------
     public Color skyTopDay = new Color(0.25f, 0.45f, 1f);
     public Color skyTopNight = new Color(0.05f, 0.1f, 0.25f);
     public Color skyMidDay = new Color(0.2f, 0.35f, 0.7f);
@@ -111,9 +108,6 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         }
     }
 
-    // -----------------------------------------------------
-    //                       LIGHTNING
-    // -----------------------------------------------------
     public void TriggerLightning()
     {
         if (!isInUpsideDown || LFCUtilities.LocalPlayer == null || LFCUtilities.LocalPlayer.isInsideFactory) return;
@@ -130,9 +124,6 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         if (lightningTimer >= lightningDuration) lightningActive = false;
     }
 
-    // -----------------------------------------------------
-    //                      DAY FACTOR
-    // -----------------------------------------------------
     private void ComputeDayFactor()
     {
         Light sun = TimeOfDay.Instance?.sunDirect;
@@ -141,9 +132,6 @@ public class UpsideDownAtmosphereController : MonoBehaviour
             : (Mathf.Sin(Time.time * 0.05f) * 0.5f) + 0.5f;
     }
 
-    // -----------------------------------------------------
-    //                       FOG
-    // -----------------------------------------------------
     private void AnimateFog()
     {
         if (LFCUtilities.LocalPlayer == null || fog == null) return;
@@ -174,9 +162,6 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         fog.meanFreePath.value = Mathf.Clamp(meanFP, 50f, 500f);
     }
 
-    // -----------------------------------------------------
-    //                        SKY
-    // -----------------------------------------------------
     private void AnimateSky()
     {
         if (LFCUtilities.LocalPlayer == null || sky == null) return;

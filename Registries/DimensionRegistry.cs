@@ -90,7 +90,7 @@ public class DimensionRegistry : MonoBehaviour
         foreach (GrabbableObject grabbableObject in LFCSpawnRegistry.GetAllAs<GrabbableObject>())
         {
             if (LFCUtilities.LocalPlayer.ItemSlots.Contains(grabbableObject))
-                StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), !IsInUpsideDown(grabbableObject.gameObject));
+                StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), IsInUpsideDown(LFCUtilities.LocalPlayer.gameObject));
             else
                 UpdateVisibilityState(grabbableObject.gameObject);
         }
