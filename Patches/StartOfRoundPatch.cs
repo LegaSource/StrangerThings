@@ -1,7 +1,9 @@
 ﻿using GameNetcodeStuff;
 using HarmonyLib;
+using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Managers;
 using StrangerThings.Registries;
+using System.Linq;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -23,14 +25,26 @@ public class StartOfRoundPatch
 
     [HarmonyPatch(typeof(StartOfRound), nameof(StartOfRound.ShipLeave))]
     [HarmonyPostfix]
-    public static void EndRound(StartOfRound __instance)
+    public static void EndGame(StartOfRound __instance)
     {
         foreach (PlayerControllerB player in __instance.allPlayerScripts)
         {
             if (DimensionRegistry.IsInUpsideDown(player.gameObject))
                 DimensionRegistry.SetInUpsideDown(player.gameObject, false);
         }
-        MapObjectsManager.upsideDownPortals.Clear();
+
+        UpsideDownAtmosphereController upsideDownAtmosphere = UpsideDownAtmosphereController.Instance;
+        if (upsideDownAtmosphere != null)
+        {
+            foreach (GameObject deadTree in upsideDownAtmosphere.DeadTrees.ToList())
+                if (deadTree != null) Object.Destroy(deadTree);
+            Object.Destroy(upsideDownAtmosphere.BatsSky);
+
+            upsideDownAtmosphere.AliveTrees.Clear();
+            upsideDownAtmosphere.DeadTrees.Clear();
+            upsideDownAtmosphere.BatsSky = null;
+        }
+        MapObjectsManager.GetUpsideDownPortals().Clear();
     }
 
     [HarmonyPatch(typeof(StartOfRound), nameof(StartOfRound.OnDisable))]

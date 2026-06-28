@@ -1,5 +1,6 @@
 ﻿using GameNetcodeStuff;
 using HarmonyLib;
+using LegaFusionCore.Managers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Scripts;
@@ -24,7 +25,7 @@ public class PlayerControllerBPatch
         if (LFCUtilities.ShouldBeLocalPlayer(__instance))
         {
             if (UpsideDownAtmosphereController.Instance == null)
-                _ = Object.Instantiate(StrangerThings.upsideDownAtmosphere, __instance.gameplayCamera.transform);
+                _ = Object.Instantiate(StrangerThings.UpsideDownAtmosphereObj, __instance.gameplayCamera.transform);
         }
     }
 
@@ -103,13 +104,29 @@ public class PlayerControllerBPatch
         }
 
         GrabbableObject grabbableObject = __instance.currentlyHeldObjectServer;
-        if (grabbableObject != null && grabbableObject.gameObject.TryGetComponentInChildren(out UpsideDownMirrorBehaviour behaviour) && behaviour.canFusion)
+        if (grabbableObject != null && grabbableObject.gameObject.TryGetComponentInChildren(out UpsideDownMirrorBehaviour mirrorBehaviour) && mirrorBehaviour.canFusion)
         {
-            behaviour.CompleteFusionServerRpc();
+            mirrorBehaviour.CompleteFusionServerRpc();
             return false;
         }
 
         return true;
+    }
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.TeleportPlayer))]
+    [HarmonyPrefix]
+    public static void PreTeleportPlayer(PlayerControllerB __instance)
+    {
+        if (LFCUtilities.ShouldBeLocalPlayer(__instance))
+            LFCCustomPassManager.RemoveFiltersByMaterial(StrangerThings.ZoneFilterMat);
+    }
+
+    [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.KillPlayer))]
+    [HarmonyPrefix]
+    public static void PreKillPlayer(PlayerControllerB __instance)
+    {
+        if (LFCUtilities.ShouldBeLocalPlayer(__instance))
+            LFCCustomPassManager.RemoveFiltersByMaterial(StrangerThings.ZoneFilterMat);
     }
 
     [HarmonyPatch(typeof(PlayerControllerB), nameof(PlayerControllerB.KillPlayerClientRpc))]

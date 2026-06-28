@@ -1,6 +1,7 @@
 ﻿using LegaFusionCore.Utilities;
 using StrangerThings.Managers;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -12,12 +13,15 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 {
     public static UpsideDownAtmosphereController Instance { get; private set; }
 
-    public Volume volume;
-    public Fog fog;
-    public GradientSky sky;
+    public Volume Volume;
+    public Fog Fog;
+    public GradientSky Sky;
 
-    public ParticleSystem spores;
-    public AudioSource audioVibe;
+    public AudioSource AudioVibe;
+    public ParticleSystem Spores;
+    public GameObject BatsSky;
+    public HashSet<GameObject> AliveTrees = [];
+    public HashSet<GameObject> DeadTrees = [];
 
     private bool isInUpsideDown = false;
 
@@ -57,9 +61,9 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         Instance = this;
         DontDestroyOnLoad(gameObject);
 
-        if (!volume.profile.TryGet(out fog)) StrangerThings.mls.LogWarning("[UpsideDown] Missing Fog override in Volume.");
-        if (!volume.profile.TryGet(out sky)) StrangerThings.mls.LogWarning("[UpsideDown] Missing GradientSky override in Volume.");
-        if (audioVibe != null) audioVibe.volume = ConfigManager.upsideDownVolume.Value;
+        if (!Volume.profile.TryGet(out Fog)) StrangerThings.mls.LogWarning("[UpsideDown] Missing Fog override in Volume.");
+        if (!Volume.profile.TryGet(out Sky)) StrangerThings.mls.LogWarning("[UpsideDown] Missing GradientSky override in Volume.");
+        if (AudioVibe != null) AudioVibe.volume = ConfigManager.upsideDownVolume.Value;
 
         SetUpsideDownState(false);
     }
@@ -68,9 +72,18 @@ public class UpsideDownAtmosphereController : MonoBehaviour
     {
         isInUpsideDown = enable;
         gameObject.SetActive(enable);
+        Spores?.gameObject.SetActive(enable);
+        BatsSky?.SetActive(enable);
 
-        if (enable) audioVibe?.Play();
-        else audioVibe?.Pause();
+        if (enable)
+            AudioVibe?.Play();
+        else
+            AudioVibe?.Pause();
+
+        foreach (GameObject aliveTree in AliveTrees)
+            aliveTree.SetActive(!enable);
+        foreach (GameObject deadTree in DeadTrees)
+            deadTree.SetActive(enable);
 
         EnableStormLogic();
     }
@@ -99,29 +112,33 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 
     private void Update()
     {
-        if (isInUpsideDown)
+        if (isInUpsideDown && LFCUtilities.LocalPlayer != null)
         {
             ComputeDayFactor();
             AnimateFog();
             AnimateSky();
             UpdateLightning();
+            if (Spores != null)
+                Spores.transform.position = (Vector3)(LFCUtilities.LocalPlayer?.gameplayCamera.transform.position + (Vector3.forward * 2f));
         }
     }
 
     public void TriggerLightning()
     {
-        if (!isInUpsideDown || LFCUtilities.LocalPlayer == null || LFCUtilities.LocalPlayer.isInsideFactory) return;
-
-        lightningActive = true;
-        lightningTimer = 0f;
+        if (isInUpsideDown && LFCUtilities.LocalPlayer != null && !LFCUtilities.LocalPlayer.isInsideFactory)
+        {
+            lightningActive = true;
+            lightningTimer = 0f;
+        }
     }
 
     private void UpdateLightning()
     {
-        if (!lightningActive) return;
-
-        lightningTimer += Time.deltaTime;
-        if (lightningTimer >= lightningDuration) lightningActive = false;
+        if (lightningActive)
+        {
+            lightningTimer += Time.deltaTime;
+            if (lightningTimer >= lightningDuration) lightningActive = false;
+        }
     }
 
     private void ComputeDayFactor()
@@ -134,7 +151,7 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 
     private void AnimateFog()
     {
-        if (LFCUtilities.LocalPlayer == null || fog == null) return;
+        if (LFCUtilities.LocalPlayer == null || Fog == null) return;
 
         bool inside = LFCUtilities.LocalPlayer.isInsideFactory;
         Color baseColor = inside ? indoorFog : outdoorFog;
@@ -152,19 +169,20 @@ public class UpsideDownAtmosphereController : MonoBehaviour
         }
 
         float intensity = Mathf.Lerp(0.5f, 2f, Mathf.Pow(dayFactor, 0.8f));
-        fog.albedo.value = animatedColor * intensity;
+        Fog.albedo.value = animatedColor * intensity;
 
         float dp = (Mathf.Sin(Time.time * densitySpeed) * 0.5f) + 0.5f;
         float meanFP = baseMeanFreePath * Mathf.Lerp(1f - densityVariation, 1f + densityVariation, dp);
 
-        if (inside) meanFP *= 0.8f;
+        if (inside)
+            meanFP *= 0.8f;
 
-        fog.meanFreePath.value = Mathf.Clamp(meanFP, 50f, 500f);
+        Fog.meanFreePath.value = Mathf.Clamp(meanFP, 50f, 500f);
     }
 
     private void AnimateSky()
     {
-        if (LFCUtilities.LocalPlayer == null || sky == null) return;
+        if (LFCUtilities.LocalPlayer == null || Sky == null) return;
 
         bool inside = LFCUtilities.LocalPlayer.isInsideFactory;
         float cycle = (Mathf.Sin(Time.time * skySpeed) * 0.5f) + 0.5f;
@@ -189,8 +207,8 @@ public class UpsideDownAtmosphereController : MonoBehaviour
 
         float pulse = Mathf.Sin(Time.time * skySpeed * 2f) * 0.05f;
 
-        sky.top.value = Color.Lerp(top * (1 - pulse), top * (1 + pulse), cycle);
-        sky.middle.value = Color.Lerp(mid * (1 - pulse), mid * (1 + pulse), cycle);
-        sky.bottom.value = Color.Lerp(bot * (1 - pulse), bot * (1 + pulse), cycle);
+        Sky.top.value = Color.Lerp(top * (1 - pulse), top * (1 + pulse), cycle);
+        Sky.middle.value = Color.Lerp(mid * (1 - pulse), mid * (1 + pulse), cycle);
+        Sky.bottom.value = Color.Lerp(bot * (1 - pulse), bot * (1 + pulse), cycle);
     }
 }

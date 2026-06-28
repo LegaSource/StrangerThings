@@ -18,8 +18,6 @@ public class AntennaHazard : NetworkBehaviour
     {
         antennaItem.isBeingUsed = false;
         antennaItem.EnablePhysics(enable: true);
-        if (LFCUtilities.ShouldBeLocalPlayer(previousPlayerHeldBy))
-            antennaItem.SyncBatteryServerRpc((int)(antennaItem.insertedBattery.charge * 100f));
         if (LFCUtilities.IsServer)
         {
             LFCNetworkManager.Instance.ForceGrabObjectEveryoneRpc(antennaItem.GetComponent<NetworkObject>(), playerId);

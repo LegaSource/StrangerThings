@@ -1,5 +1,5 @@
 ﻿using GameNetcodeStuff;
-using LegaFusionCore.Behaviours.Shaders;
+using LegaFusionCore.Managers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Enemies;
@@ -14,6 +14,9 @@ namespace StrangerThings.Behaviours.MapObjects;
 
 public class UpsideDownPortal : NetworkBehaviour, IHittable
 {
+    public InteractTrigger PortalTrigger;
+    public ParticleSystem PortalSpores;
+
     public bool isOutside;
     public bool isFake;
     public bool isLocked = false;
@@ -22,8 +25,6 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
     public float lockTimer = 0f;
 
     public PlayerControllerB corruptedPlayer;
-    public InteractTrigger portalTrigger;
-    public ParticleSystem portalSpores;
     public Coroutine disableCoroutine;
 
     private readonly Color baseColor = new Color(0.2f, 0.48f, 0.84f);
@@ -34,8 +35,9 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
     {
         this.isOutside = isOutside;
         this.isFake = isFake;
-        portalTrigger.gameObject.SetActive(!isFake);
-        if (!isFake) MapObjectsManager.AddUpsideDownPortal(this);
+        PortalTrigger.gameObject.SetActive(!isFake);
+        if (!isFake)
+            MapObjectsManager.AddPortal(this);
     }
 
     public void PortalInteraction()
@@ -43,10 +45,10 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
         PlayerControllerB player = LFCUtilities.LocalPlayer;
         if (isCorrupted)
         {
-            if (!DimensionRegistry.IsInUpsideDown(player?.gameObject))
+            if (!DimensionRegistry.IsInUpsideDown(player?.gameObject) || player == corruptedPlayer)
                 RestorePortalEveryoneRpc();
             else
-                HUDManager.Instance.DisplayTip("Impossible action", "The portal is corrupted. You must find a way to restore it.");
+                HUDManager.Instance.DisplayTip("Impossible action", "The portal is corrupted. It needs to be restored.");
             return;
         }
         if (isLocked)
@@ -75,9 +77,9 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
     {
         isCorrupted = true;
 
-        ParticleSystem.MainModule main = portalSpores.main;
+        ParticleSystem.MainModule main = PortalSpores.main;
         main.startColor = corruptedColor;
-        ParticleSystem.EmissionModule emission = portalSpores.emission;
+        ParticleSystem.EmissionModule emission = PortalSpores.emission;
         emission.rateOverTime = 7f;
     }
 
@@ -92,7 +94,7 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
             {
                 if (ConfigManager.globalTips.Value)
                     HUDManager.Instance.DisplayTip("Information", "A portal has been corrupted. You must find a way to restore it in order to escape the dimension.");
-                CustomPassManager.SetupAuraForObjects([gameObject], LegaFusionCore.LegaFusionCore.wallhackShader, $"{StrangerThings.modName}Portal", Color.red);
+                LFCCustomPassManager.SetupAuraForObjects([gameObject], LegaFusionCore.LegaFusionCore.wallhackShader, $"{StrangerThings.modName}Portal", Color.red);
             }
         }
     }
@@ -101,14 +103,14 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
     public void RestorePortalEveryoneRpc()
     {
         if (LFCUtilities.ShouldBeLocalPlayer(corruptedPlayer))
-            CustomPassManager.RemoveAuraByTag($"{StrangerThings.modName}Portal");
+            LFCCustomPassManager.RemoveAuraByTag($"{StrangerThings.modName}Portal");
 
         isCorrupted = false;
         corruptedPlayer = null;
 
-        ParticleSystem.MainModule main = portalSpores.main;
+        ParticleSystem.MainModule main = PortalSpores.main;
         main.startColor = baseColor;
-        ParticleSystem.EmissionModule emission = portalSpores.emission;
+        ParticleSystem.EmissionModule emission = PortalSpores.emission;
         emission.rateOverTime = 4f;
     }
 
@@ -168,10 +170,10 @@ public class UpsideDownPortal : NetworkBehaviour, IHittable
 
     public IEnumerator DisableCoroutine()
     {
-        portalTrigger.gameObject.SetActive(false);
+        PortalTrigger.gameObject.SetActive(false);
         yield return new WaitForSeconds(5f);
 
-        portalTrigger.gameObject.SetActive(true);
+        PortalTrigger.gameObject.SetActive(true);
         disableCoroutine = null;
     }
 }

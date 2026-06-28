@@ -1,8 +1,10 @@
 ﻿using GameNetcodeStuff;
+using LegaFusionCore.Managers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.MapObjects;
 using StrangerThings.Behaviours.Scripts;
+using StrangerThings.Behaviours.Scripts.Projectiles;
 using StrangerThings.Managers;
 using System;
 using System.Collections.Generic;
@@ -16,12 +18,12 @@ namespace StrangerThings.Registries;
 
 public class DimensionRegistry : MonoBehaviour
 {
-    private static readonly HashSet<GameObject> upsideDownEntities = [];
+    private static readonly HashSet<GameObject> UpsideDownEntities = [];
 
     public static GameObject GetUpsideDownEntity(GameObject entity)
     {
-        _ = upsideDownEntities.RemoveWhere(e => e == null);
-        return upsideDownEntities.FirstOrDefault(e => e == entity);
+        _ = UpsideDownEntities.RemoveWhere(e => e == null);
+        return UpsideDownEntities.FirstOrDefault(e => e == entity);
     }
 
     public static bool CanSetInUpsideDown(GameObject entity, bool isInUpsideDown)
@@ -34,13 +36,19 @@ public class DimensionRegistry : MonoBehaviour
             {
                 if (upsideDownPortal.corruptedPlayer == player)
                 {
+                    if (!StartOfRound.Instance.shipHasLanded)
+                    {
+                        // Si le vaisseau part - on restaure le portail
+                        upsideDownPortal.RestorePortalEveryoneRpc();
+                        continue;
+                    }
                     if (LFCUtilities.ShouldBeLocalPlayer(player))
                         HUDManager.Instance.DisplayTip("Impossible action", "You have been corrupted. You must find another way out.");
                     return false;
                 }
             }
         }
-        return isInUpsideDown ? upsideDownEntities.Add(entity) : upsideDownEntities.Remove(entity);
+        return isInUpsideDown ? UpsideDownEntities.Add(entity) : UpsideDownEntities.Remove(entity);
     }
 
     public static void SetInUpsideDown(GameObject entity, bool isInUpsideDown)
@@ -57,6 +65,8 @@ public class DimensionRegistry : MonoBehaviour
                 UpdateLightsVisibilityForLocalClient();
                 UpdateShipFeaturesForLocalClient();
                 UpdateFlickeringFlashlights(player);
+                if (!isInUpsideDown)
+                    LFCCustomPassManager.RemoveFiltersByMaterial(StrangerThings.ZoneFilterMat);
                 UpsideDownAtmosphereController.Instance.SetUpsideDownState(isInUpsideDown);
             }
             else
@@ -89,10 +99,21 @@ public class DimensionRegistry : MonoBehaviour
         }
         foreach (GrabbableObject grabbableObject in LFCSpawnRegistry.GetAllAs<GrabbableObject>())
         {
-            if (LFCUtilities.LocalPlayer.ItemSlots.Contains(grabbableObject))
+            if (LFCUtilities.LocalPlayer.GetItemSlots().Contains(grabbableObject))
+            {
+                if (grabbableObject is BeltBagItem beltBagItem)
+                {
+                    for (int i = beltBagItem.objectsInBag.Count - 1; i >= 0; i--)
+                    {
+                        GrabbableObject objectInBag = beltBagItem.objectsInBag[i];
+                        if (objectInBag != null)
+                            StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(objectInBag.GetComponent<NetworkObject>(), IsInUpsideDown(LFCUtilities.LocalPlayer.gameObject));
+                    }
+                }
                 StrangerThingsNetworkManager.Instance.SetGObjectInUpsideDownEveryoneRpc(grabbableObject.GetComponent<NetworkObject>(), IsInUpsideDown(LFCUtilities.LocalPlayer.gameObject));
-            else
-                UpdateVisibilityState(grabbableObject.gameObject);
+                continue;
+            }
+            UpdateVisibilityState(grabbableObject.gameObject);
         }
         foreach (PlayerControllerB player in StartOfRound.Instance.allPlayerScripts)
         {
@@ -162,6 +183,8 @@ public class DimensionRegistry : MonoBehaviour
                 || gObject.TryGetComponent<VehicleController>(out _)
                 || gObject.TryGetComponent<RockProjectile>(out _)
                 || gObject.TryGetComponent<AntennaHazard>(out _)
+                || gObject.TryGetComponent<BatsHorde>(out _)
+                || gObject.TryGetComponent<VinesZone>(out _)
                 || LFCUtilities.HasNameFromList(LFCUtilities.GetGameObjectName(gObject), ConfigManager.visibilityStateInclusions.Value));
     public static bool IsBlacklisted(GameObject gObject)
         => gObject != null && LFCUtilities.HasNameFromList(LFCUtilities.GetGameObjectName(gObject), ConfigManager.visibilityStateExclusions.Value);

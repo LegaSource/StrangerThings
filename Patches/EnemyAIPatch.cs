@@ -18,12 +18,12 @@ public class EnemyAIPatch
     private static void StartEnemy(ref EnemyAI __instance)
     {
         if (LFCUtilities.IsServer && __instance is not UpsideDownEnemyAI)
-            SpawnUpsideDownEnemy(__instance.isOutside, __instance.transform.position);
+            SpawnUpsideDownEnemy(__instance.transform.position);
     }
 
-    private static void SpawnUpsideDownEnemy(bool isOutside, Vector3 position)
+    private static void SpawnUpsideDownEnemy(Vector3 position)
     {
-        EnemyType enemyType = GetRandomEnemy(isOutside);
+        EnemyType enemyType = GetRandomEnemy(isOutside: position.y > -80f);
         if (enemyType != null)
         {
             position = RoundManager.Instance.GetRandomNavMeshPositionInRadiusSpherical(position);
@@ -44,11 +44,10 @@ public class EnemyAIPatch
     public static List<EnemyType> GetEligibleEnemies(bool isOutside)
     {
         List<EnemyType> eligibleEnemies = [];
-        foreach (KeyValuePair<EnemyType, int> upsideDownEnemy in StrangerThings.upsideDownEnemies)
+        foreach (KeyValuePair<EnemyType, int> upsideDownEnemy in StrangerThings.UpsideDownEnemies)
         {
             EnemyType enemyType = upsideDownEnemy.Key;
-            EnemyAI enemy = enemyType.enemyPrefab.GetComponent<EnemyAI>();
-            if (enemy != null && enemy.isOutside == isOutside && enemyType.numberSpawned < enemyType.MaxCount)
+            if (enemyType.isOutsideEnemy == isOutside && enemyType.numberSpawned < enemyType.MaxCount)
             {
                 for (int i = 0; i < upsideDownEnemy.Value; i++)
                     eligibleEnemies.Add(enemyType);
@@ -61,7 +60,7 @@ public class EnemyAIPatch
     [HarmonyPrefix]
     private static bool PlayerIsTargetable(ref EnemyAI __instance, ref bool __result, PlayerControllerB playerScript)
     {
-        if (!DimensionRegistry.AreInSameDimension(__instance.gameObject, playerScript.gameObject)
+        if (!DimensionRegistry.AreInSameDimension(__instance.gameObject, playerScript?.gameObject)
             && (__instance is not DemogorgonKidnapperAI demogorgon || demogorgon.currentBehaviourStateIndex != (int)DemogorgonAI.State.WANDERING))
         {
             __result = false;
@@ -78,10 +77,11 @@ public class EnemyAIPatch
         {
             // Naviguer vers le portail le temps que le monstre perde le joueur
             UpsideDownPortal upsideDownPortal = MapObjectsManager.GetClosestPortal(__instance.transform.position);
-            if (upsideDownPortal == null) return true;
-
-            __instance.destination = upsideDownPortal.transform.position;
-            return false;
+            if (upsideDownPortal != null)
+            {
+                __instance.destination = upsideDownPortal.transform.position;
+                return false;
+            }
         }
         return true;
     }

@@ -1,9 +1,11 @@
 ﻿using GameNetcodeStuff;
 using LegaFusionCore.Managers;
-using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
+using LethalStatus.Managers;
+using LethalStatus.StatusEffects;
 using StrangerThings.Behaviours.Scripts;
+using StrangerThings.Behaviours.Scripts.Projectiles;
 using StrangerThings.Registries;
 using System.Collections;
 using System.Linq;
@@ -17,6 +19,29 @@ public class StrangerThingsNetworkManager : NetworkBehaviour
     public static StrangerThingsNetworkManager Instance;
 
     public void Awake() => Instance = this;
+
+    [Rpc(SendTo.Everyone, RequireOwnership = false)]
+    public void SpawnUpsideDownTreesEveryoneRpc(int seed)
+    {
+        UpsideDownAtmosphereController upsideDownAtmosphere = UpsideDownAtmosphereController.Instance;
+        if (upsideDownAtmosphere != null)
+        {
+            System.Random random = new System.Random(seed);
+            upsideDownAtmosphere.AliveTrees = LFCTreesRegistry.GetTrees().ToHashSet();
+
+            IOrderedEnumerable<GameObject> sortedTrees = upsideDownAtmosphere.AliveTrees.OrderBy(t => t.transform.position.sqrMagnitude);
+            foreach (GameObject aliveTree in sortedTrees)
+            {
+                GameObject[] treeObjs = [StrangerThings.Tree1Obj, StrangerThings.Tree2Obj, StrangerThings.Tree3Obj];
+                GameObject treeObj = Instantiate(treeObjs[random.Next(0, treeObjs.Length)], aliveTree.transform.position, aliveTree.transform.rotation);
+                treeObj.transform.localScale *= Mathf.Lerp(1f, 2.5f, (float)random.NextDouble());
+                treeObj.SetActive(false);
+
+                _ = upsideDownAtmosphere.DeadTrees.Add(treeObj);
+                LFCTreesRegistry.AddTree(treeObj);
+            }
+        }
+    }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
     public void SetPlayerInUpsideDownEveryoneRpc(int playerId, bool isInUpsideDown)
@@ -42,15 +67,15 @@ public class StrangerThingsNetworkManager : NetworkBehaviour
         if (!scriptObj.TryGet(out NetworkObject scriptNetworkObject) || !mirrorObj.TryGet(out NetworkObject mirrorNetworkObject) || !twinObj.TryGet(out NetworkObject twinNetworkObject))
             return;
 
-        if (scriptNetworkObject.TryGetComponent(out UpsideDownMirrorBehaviour upsideDownMirrorBehaviour))
+        if (scriptNetworkObject.TryGetComponent(out UpsideDownMirrorBehaviour mirrorBehaviour))
         {
             GrabbableObject mirror = mirrorNetworkObject.GetComponentInChildren<GrabbableObject>();
-            upsideDownMirrorBehaviour.mirror = mirror;
+            mirrorBehaviour.mirror = mirror;
             scriptNetworkObject.transform.SetParent(mirror.transform, worldPositionStays: true);
 
             GrabbableObject twin = twinNetworkObject.GetComponentInChildren<GrabbableObject>();
-            upsideDownMirrorBehaviour.twin = twin;
-            upsideDownMirrorBehaviour.twinRenderers = twin.GetComponentsInChildren<MeshRenderer>().Where(r => r.enabled).ToList();
+            mirrorBehaviour.twin = twin;
+            mirrorBehaviour.twinRenderers = twin.GetComponentsInChildren<MeshRenderer>().Where(r => r.enabled).ToList();
         }
     }
 
@@ -76,16 +101,24 @@ public class StrangerThingsNetworkManager : NetworkBehaviour
         float timePassed = 0f;
         while (timePassed < duration)
         {
-            foreach (Collider hitCollider in Physics.OverlapSphere(position, Mathf.Max(timePassed * 5f, 7.5f), StartOfRound.Instance.playersMask, QueryTriggerInteraction.Collide))
-            {
-                PlayerControllerB player = hitCollider.GetComponent<PlayerControllerB>();
-                if (player == null || player.isPlayerDead || !DimensionRegistry.IsInUpsideDown(player.gameObject)) continue;
+            Collider[] overlapBuffer = new Collider[64];
+            int count = Physics.OverlapSphereNonAlloc(position, Mathf.Max(timePassed * 5f, 7.5f), overlapBuffer, StartOfRound.Instance.playersMask, QueryTriggerInteraction.Collide);
 
-                LFCNetworkManager.Instance.ApplyStatusEveryoneRpc(-1, (int)player.playerClientId, (int)LFCStatusEffectRegistry.StatusEffectType.POISON, 10, 20);
+            for (int i = 0; i < count; i++)
+            {
+                if (overlapBuffer[i].TryGetComponent(out PlayerControllerB player) && !player.isPlayerDead && DimensionRegistry.IsInUpsideDown(player.gameObject))
+                    LSNetworkManager.Instance.ApplyStatusEveryoneRpc(-1, (int)player.playerClientId, (int)LSStatusEffectRegistry.StatusEffectType.POISON, 10, 20);
             }
 
             yield return new WaitForSeconds(0.2f);
             timePassed += 0.2f;
         }
+    }
+
+    [Rpc(SendTo.NotServer, RequireOwnership = false)]
+    public void SyncDoorPositionNotServerRpc(NetworkObjectReference doorObj, Vector3 position, Quaternion rotation, bool hasLanded)
+    {
+        if (doorObj.TryGet(out NetworkObject networkObject) && networkObject.TryGetComponent(out DoorProjectile doorProjectile))
+            doorProjectile.SyncPosition(position, rotation, hasLanded);
     }
 }

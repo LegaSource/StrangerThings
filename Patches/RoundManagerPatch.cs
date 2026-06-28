@@ -4,6 +4,7 @@ using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Registries;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Items;
+using StrangerThings.Behaviours.Scripts;
 using StrangerThings.Managers;
 using StrangerThings.Registries;
 using System.Collections;
@@ -16,24 +17,73 @@ namespace StrangerThings.Patches;
 
 public class RoundManagerPatch
 {
+    [HarmonyPatch(typeof(RoundManager), nameof(RoundManager.FinishGeneratingLevel))]
+    [HarmonyAfter(["Lega.LegaFusionCore"])]
+    [HarmonyPostfix]
+    private static void SpawnUpsideDownEnvironment()
+    {
+        UpsideDownAtmosphereController upsideDownAtmosphere = UpsideDownAtmosphereController.Instance;
+        if (upsideDownAtmosphere == null) return;
+
+        upsideDownAtmosphere.BatsSky = Object.Instantiate(StrangerThings.BatsSkyObj, StartOfRound.Instance.shipLandingPosition.position + (Vector3.up * 50f), Quaternion.identity);
+        upsideDownAtmosphere.BatsSky.SetActive(false);
+        if (LFCUtilities.IsServer)
+        {
+            LFCMapObjectsManager.SpawnOutsideMapObjectsForServer(ConfigManager.minBatsHordeOutside.Value, ConfigManager.maxBatsHordeOutside.Value, SpawnBatsHorde);
+            LFCMapObjectsManager.SpawnOutsideMapObjectsForServer(ConfigManager.minVinesZoneOutside.Value, ConfigManager.maxVinesZoneOutside.Value, SpawnUpsideDownZone);
+            StrangerThingsNetworkManager.Instance.SpawnUpsideDownTreesEveryoneRpc(StartOfRound.Instance.randomMapSeed);
+        }
+
+        if (upsideDownAtmosphere.Spores == null)
+        {
+            GameObject sporesObj = Object.Instantiate(StrangerThings.UpsideDownSporesObj, (Vector3)(LFCUtilities.LocalPlayer?.gameplayCamera.transform.position) + (Vector3.forward * 2f), Quaternion.identity);
+            upsideDownAtmosphere.Spores = sporesObj.GetComponent<ParticleSystem>();
+            upsideDownAtmosphere.Spores.gameObject.SetActive(false);
+        }
+    }
+
+    public static void SpawnBatsHorde(Vector3 position, Quaternion rotation)
+    {
+        if (Physics.Raycast(position, Vector3.down, out RaycastHit hit, 5f, StartOfRound.Instance.collidersAndRoomMaskAndDefault))
+        {
+            GameObject gameObject = Object.Instantiate(StrangerThings.BatsHordeObj, hit.point + (Vector3.up * 2.25f), Quaternion.Euler(0f, rotation.eulerAngles.y, rotation.eulerAngles.z), RoundManager.Instance.mapPropsContainer.transform);
+            gameObject.GetComponent<NetworkObject>().Spawn(true);
+        }
+    }
+
+    public static void SpawnUpsideDownZone(Vector3 position, Quaternion rotation)
+    {
+        if (Physics.Raycast(position, Vector3.down, out RaycastHit hit, 5f, StartOfRound.Instance.collidersAndRoomMaskAndDefault))
+        {
+            GameObject gameObject = Object.Instantiate(StrangerThings.VinesZoneObj, hit.point, Quaternion.Euler(0f, rotation.eulerAngles.y, 0f), RoundManager.Instance.mapPropsContainer.transform);
+            gameObject.GetComponent<NetworkObject>().Spawn(true);
+        }
+    }
+
     [HarmonyPatch(typeof(RoundManager), nameof(RoundManager.waitForScrapToSpawnToSync))]
     [HarmonyPostfix]
-    private static IEnumerator SpawnMirrorObjects(IEnumerator result)
+    private static IEnumerator PostGeneratedProcess(IEnumerator result)
     {
-        while (result.MoveNext()) yield return result.Current;
+        while (result.MoveNext())
+            yield return result.Current;
 
+        SpawnMirrorObjects();
+    }
+
+    public static void SpawnMirrorObjects()
+    {
         int maxSpawn = Random.Range(ConfigManager.minMirrorScraps.Value, ConfigManager.maxMirrorScraps.Value + 1);
         int nbSpawn = 0;
         foreach (GrabbableObject grabbableObject in LFCSpawnRegistry.GetAllAs<GrabbableObject>())
         {
             if (string.IsNullOrEmpty(grabbableObject.itemProperties?.itemName)) continue;
             if (!(string.IsNullOrEmpty(ConfigManager.scrapExclusions.Value) || !ConfigManager.scrapExclusions.Value.Contains(grabbableObject.itemProperties.itemName))) continue;
-            if (!grabbableObject.isInFactory || grabbableObject.isInShipRoom || grabbableObject.scrapValue <= 0) continue;
+            if (!grabbableObject.isInFactory || grabbableObject.isInShipRoom || grabbableObject.scrapValue <= 0 || DimensionRegistry.IsInUpsideDown(grabbableObject.gameObject)) continue;
 
             GrabbableObject upsideDownObject = SpawnUpsideDownObject(grabbableObject.itemProperties);
             if (upsideDownObject != null)
             {
-                GameObject gameObject = Object.Instantiate(StrangerThings.upsideDownMirrorObject, upsideDownObject.transform.position, Quaternion.identity);
+                GameObject gameObject = Object.Instantiate(StrangerThings.UpsideDownMirrorObjectObj, upsideDownObject.transform.position, Quaternion.identity);
                 NetworkObject networkObject = gameObject.GetComponent<NetworkObject>();
                 networkObject.Spawn();
                 StrangerThingsNetworkManager.Instance.AddToMirrorEveryoneRpc(networkObject, upsideDownObject.GetComponent<NetworkObject>(), grabbableObject.GetComponent<NetworkObject>());
@@ -68,7 +118,7 @@ public class RoundManagerPatch
     [HarmonyPostfix]
     private static void ResetEnemyTypesSpawnedCounts(RoundManager __instance)
     {
-        foreach (KeyValuePair<EnemyType, int> upsideDownEnemy in StrangerThings.upsideDownEnemies)
+        foreach (KeyValuePair<EnemyType, int> upsideDownEnemy in StrangerThings.UpsideDownEnemies)
         {
             EnemyType enemyType = upsideDownEnemy.Key;
             enemyType.numberSpawned = 0;

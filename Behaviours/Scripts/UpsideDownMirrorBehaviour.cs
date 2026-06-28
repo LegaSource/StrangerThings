@@ -1,5 +1,5 @@
 ﻿using GameNetcodeStuff;
-using LegaFusionCore.Behaviours.Shaders;
+using LegaFusionCore.Managers;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Utilities;
 using StrangerThings.Managers;
@@ -14,13 +14,12 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
 {
     public GrabbableObject mirror;
     public GrabbableObject twin;
-    public InteractTrigger twinTrigger;
     public List<MeshRenderer> twinRenderers = [];
 
     public bool canFusion = false;
     public int valueMultiplier = 3;
 
-    public ParticleSystem heldParticles;
+    public ParticleSystem HeldParticles;
     public Color particlesColor;
     public float fxTickInterval = 0.1f;
     private float fxTick;
@@ -30,30 +29,31 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
 
     private void Update()
     {
-        if (heldParticles == null || twin == null || mirror == null) return;
-
-        fxTick -= Time.deltaTime;
-        if (fxTick <= 0f)
+        if (HeldParticles != null && twin != null && mirror != null)
         {
-            fxTick = fxTickInterval;
-            UpdateHeldFxLayeredColor(mirror.playerHeldBy);
+            fxTick -= Time.deltaTime;
+            if (fxTick <= 0f)
+            {
+                fxTick = fxTickInterval;
+                UpdateHeldFxLayeredColor(mirror.playerHeldBy);
+            }
+            ShowAuraTwinObject(mirror.playerHeldBy);
         }
-        ShowAuraTwinObject(mirror.playerHeldBy);
     }
 
     private void UpdateHeldFxLayeredColor(PlayerControllerB player)
     {
         if (!mirror.isHeld || mirror.isPocketed || !LFCUtilities.ShouldBeLocalPlayer(player) || DimensionRegistry.AreInSameDimension(mirror.gameObject, twin.gameObject))
         {
-            if (heldParticles != null && heldParticles.isPlaying)
-                heldParticles.Stop();
+            if (HeldParticles != null && HeldParticles.isPlaying)
+                HeldParticles.Stop();
             lastBand = (DistanceBand)(-1);
             return;
         }
 
-        if (!heldParticles.isPlaying)
+        if (!HeldParticles.isPlaying)
         {
-            heldParticles.Play();
+            HeldParticles.Play();
             if (ConfigManager.globalTips.Value)
                 HUDManager.Instance.DisplayTip("Tips", "Find the real world counterpart and with help combine them between realms");
         }
@@ -62,13 +62,13 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
         GetLayerValues(distance, out float layerMin, out float layerMax);
         float proximityFactor = Mathf.Pow(Mathf.Clamp01(Mathf.InverseLerp(layerMax, layerMin, distance)), 2f);
 
-        ParticleSystem.MainModule main = heldParticles.main;
+        ParticleSystem.MainModule main = HeldParticles.main;
         main.startColor = particlesColor;
         main.startLifetime = Mathf.Lerp(2f, 1f, proximityFactor);
         main.startSize = Mathf.Lerp(0.1f, 1f, proximityFactor);
         main.startSpeed = Mathf.Lerp(0.02f, 0.1f, proximityFactor);
 
-        ParticleSystem.EmissionModule emission = heldParticles.emission;
+        ParticleSystem.EmissionModule emission = HeldParticles.emission;
         emission.rateOverTime = Mathf.Lerp(2f, 10f, proximityFactor);
     }
 
@@ -128,8 +128,8 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
         }
 
         canFusion = true;
-        twinRenderers?.ForEach(r => r.enabled = true);
-        CustomPassManager.SetupAuraForObjects([twin.gameObject], LegaFusionCore.LegaFusionCore.transparentShader, $"{StrangerThings.modName}TwinObject{twin.GetInstanceID()}", Color.yellow);
+        twinRenderers?.ForEach(r => { if (r != null) r.enabled = true; });
+        LFCCustomPassManager.SetupAuraForObjects([twin.gameObject], LegaFusionCore.LegaFusionCore.transparentShader, $"{StrangerThings.modName}TwinObject{twin.GetInstanceID()}", Color.yellow);
         player.cursorTip.text = Constants.MIRROR_FUSION;
     }
 
@@ -138,8 +138,8 @@ public class UpsideDownMirrorBehaviour : NetworkBehaviour
         if (DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject))
         {
             canFusion = false;
-            twinRenderers?.ForEach(r => r.enabled = false);
-            CustomPassManager.RemoveAuraByTag($"{StrangerThings.modName}TwinObject{twin.GetInstanceID()}");
+            twinRenderers?.ForEach(r => { if (r != null) r.enabled = false; });
+            LFCCustomPassManager.RemoveAuraByTag($"{StrangerThings.modName}TwinObject{twin.GetInstanceID()}");
             if (LFCUtilities.LocalPlayer != null && Constants.MIRROR_FUSION.Equals(LFCUtilities.LocalPlayer.cursorTip.text))
                 LFCUtilities.LocalPlayer.cursorTip.text = "";
         }

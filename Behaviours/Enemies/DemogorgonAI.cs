@@ -3,11 +3,12 @@ using LegaFusionCore.Managers;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.MapObjects;
-using StrangerThings.Behaviours.Scripts;
+using StrangerThings.Behaviours.Scripts.Projectiles;
 using StrangerThings.Managers;
 using StrangerThings.Registries;
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -16,14 +17,12 @@ namespace StrangerThings.Behaviours.Enemies;
 public abstract class DemogorgonAI : UpsideDownEnemyAI
 {
     public Transform TurnCompass;
+    public DemogorgonSoundSerializableEntry[] DemogorgonSoundsEntry;
+    public Dictionary<Sound, AudioClip[]> DemogorgonSounds;
 
-    public AudioClip[] FootstepSounds = Array.Empty<AudioClip>();
-    public AudioClip[] GrowlSounds = Array.Empty<AudioClip>();
-    public AudioClip[] DemogorgonSounds = Array.Empty<AudioClip>();
-
-    public float footstepTimer = 0f;
-    public float growlTimer = 0f;
-    public float dashTimer = 0f;
+    private float moveTimer = 0f;
+    private float growlTimer = 0f;
+    private float dashTimer = 0f;
     public float dashCooldown = 15f;
 
     public bool canDash = false;
@@ -35,10 +34,11 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     public Coroutine stopDashCoroutine;
     public Coroutine swingCoroutine;
 
-    public UpsideDownPortal closestPortal;
+    protected UpsideDownPortal closestPortal;
 
     public enum State { WANDERING, PORTALING, CHASING }
-    public enum Sound { SET, DIG, CHARGE, DASH, SWING, ROAR }
+    public enum Sound { MOVE, GROWL, SET, DIG, CHARGE, DASH, SWING, ROAR }
+    [Serializable] public class DemogorgonSoundSerializableEntry : LFCUtilities.SerializableEntry<Sound, AudioClip[]> { }
 
     public override void ForceSend()
     {
@@ -54,6 +54,7 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     {
         base.Start();
 
+        DemogorgonSounds = DemogorgonSoundsEntry.ToDictionary();
         currentBehaviourStateIndex = (int)State.WANDERING;
         StartSearch(transform.position);
         MapObjectsManager.SpawnPortalsForServer();
@@ -67,7 +68,7 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
         base.Update();
         if (stunCoroutine != null) return;
 
-        PlayFootstepSound();
+        PlayMoveSound();
         PlayGrowlSound();
         if (targetPlayer != null)
         {
@@ -99,16 +100,16 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
         }
     }
 
-    public void PlayFootstepSound()
+    public void PlayMoveSound()
     {
-        AnimatorClipInfo[] info = creatureAnimator.GetCurrentAnimatorClipInfo(0);
-        if (info.Length != 0 && (info[0].clip.name.Contains("move") || info[0].clip.name.Contains("carry")))
+        AnimatorClipInfo[] currentAnimatorClipInfo = creatureAnimator.GetCurrentAnimatorClipInfo(0);
+        if (currentAnimatorClipInfo.Length != 0 && (currentAnimatorClipInfo[0].clip.name.Contains("move") || currentAnimatorClipInfo[0].clip.name.Contains("carry")))
         {
-            footstepTimer -= Time.deltaTime;
-            if (FootstepSounds.Length > 0 && footstepTimer <= 0)
+            moveTimer -= Time.deltaTime;
+            if (DemogorgonSounds.TryGetValue(Sound.MOVE, out AudioClip[] moveSounds) && moveSounds.Length > 0 && moveTimer <= 0)
             {
-                creatureSFX.PlayOneShot(FootstepSounds[UnityEngine.Random.Range(0, FootstepSounds.Length)]);
-                footstepTimer = 0.45f;
+                creatureSFX.PlayOneShot(moveSounds[UnityEngine.Random.Range(0, moveSounds.Length)]);
+                moveTimer = 0.45f;
             }
         }
     }
@@ -116,9 +117,9 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     public void PlayGrowlSound()
     {
         growlTimer -= Time.deltaTime;
-        if (GrowlSounds.Length > 0 && growlTimer <= 0)
+        if (DemogorgonSounds.TryGetValue(Sound.GROWL, out AudioClip[] growlSounds) && growlSounds.Length > 0 && growlTimer <= 0)
         {
-            creatureSFX.PlayOneShot(GrowlSounds[UnityEngine.Random.Range(0, GrowlSounds.Length)]);
+            creatureSFX.PlayOneShot(growlSounds[UnityEngine.Random.Range(0, growlSounds.Length)]);
             growlTimer = 4f;
         }
     }
@@ -201,7 +202,7 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
             if (canDash && distanceWithPlayer <= 15f && distanceWithPlayer >= 3f && targetPlayer != null && CheckLineOfSightForPosition(targetPlayer.transform.position))
             {
                 canDash = false;
-                dashCoroutine ??= StartCoroutine(DashCoroutine());
+                dashCoroutine = StartCoroutine(DashCoroutine());
                 return;
             }
         }
@@ -222,14 +223,14 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
 
                 agent.speed = 0f;
                 DoAnimationEveryoneRpc("startCharge");
-                PlayAudioEveryoneRpc((int)Sound.CHARGE);
+                PlaySFXEveryoneRpc((int)Sound.CHARGE);
                 yield return this.WaitForFullAnimation("charge");
 
                 DoAnimationEveryoneRpc("startDash");
-                PlayAudioEveryoneRpc((int)Sound.DASH);
+                PlaySFXEveryoneRpc((int)Sound.DASH);
 
                 isDashing = true;
-                agent.speed = 30f;
+                agent.speed = 24f;
                 agent.angularSpeed = 0f;
                 agent.acceleration = 100f;
 
@@ -267,7 +268,7 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
         if (player != null)
             LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 80, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
 
-        PlayAudioEveryoneRpc((int)Sound.ROAR);
+        PlaySFXEveryoneRpc((int)Sound.ROAR);
         yield return this.WaitForFullAnimation("recover");
         DoAnimationEveryoneRpc("startMove");
 
@@ -323,11 +324,12 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     {
         agent.speed = 0f;
         DoAnimationEveryoneRpc("startSwing");
-        PlayAudioEveryoneRpc((int)Sound.SWING);
+        PlaySFXEveryoneRpc((int)Sound.SWING);
         yield return this.WaitForFullAnimation("swing");
 
         LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 20, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
         DoAnimationEveryoneRpc("startMove");
+        yield return new WaitForSeconds(0.5f);
         agent.speed = 7f;
 
         swingCoroutine = null;
@@ -360,44 +362,32 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
     public void BreakDoorEveryoneRpc(NetworkObjectReference obj, Vector3 direction)
     {
-        if (!obj.TryGet(out NetworkObject networkObject)) return;
+        if (obj.TryGet(out NetworkObject networkObject))
+        {
+            GameObject doorObject = networkObject.gameObject;
+            doorObject.transform.position += direction * 0.5f;
 
-        GameObject door = networkObject.gameObject;
-        door.transform.position += direction * 0.5f;
+            DoorProjectile doorProjectile = doorObject.GetComponent<DoorProjectile>() ?? doorObject.AddComponent<DoorProjectile>();
+            doorProjectile.Initialize();
+            doorProjectile.Throw(direction, 20f, isLastThrow: true);
 
-        _ = door.AddComponent<DoorProjectile>();
-        Rigidbody rb = door.AddComponent<Rigidbody>();
-        rb.useGravity = false;
-
-        _ = StartCoroutine(ReleaseDoor(rb, direction));
-
-        if (networkObject.gameObject.TryGetComponentInChildren(out AnimatedObjectTrigger objectTrigger))
-            objectTrigger.PlayAudio(objectTrigger.boolValue, true);
-    }
-
-    protected IEnumerator ReleaseDoor(Rigidbody rb, Vector3 force)
-    {
-        yield return new WaitForFixedUpdate();
-        rb.AddForce(force, ForceMode.Impulse);
-
-        yield return new WaitForFixedUpdate();
-        rb.useGravity = true;
+            if (networkObject.gameObject.TryGetComponentInChildren(out AnimatedObjectTrigger objectTrigger))
+                objectTrigger.PlayAudio(objectTrigger.boolValue, true);
+        }
     }
 
     public bool IsFleeing() => !DimensionRegistry.IsInUpsideDown(gameObject) && enemyHP <= 5;
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void RestoreEnemyHealthEveryoneRpc()
-        => enemyHP = 10;
+    public void RestoreEnemyHealthEveryoneRpc() => enemyHP = 10;
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlayAudioEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int enemySound)
     {
-        if (DemogorgonSounds.Length > 0)
-            creatureSFX.PlayOneShot(DemogorgonSounds[enemySound]);
+        if (DemogorgonSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+            creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void DoAnimationEveryoneRpc(string animationState)
-        => creatureAnimator.SetTrigger(animationState);
+    public void DoAnimationEveryoneRpc(string animationState) => creatureAnimator.SetTrigger(animationState);
 }

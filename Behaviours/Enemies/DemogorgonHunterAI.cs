@@ -15,8 +15,8 @@ public class DemogorgonHunterAI : DemogorgonAI
 {
     public AudioClip ScreamSound;
 
-    public float setTimer = 30f;
-    public float huntTimer = 0f;
+    private float setTimer = 30f;
+    private float huntTimer = 0f;
 
     public float setCooldown = 60f;
     public float huntDuration = 30f;
@@ -67,13 +67,13 @@ public class DemogorgonHunterAI : DemogorgonAI
         agent.speed = 0f;
 
         DoAnimationEveryoneRpc("startSetIn");
-        PlayAudioEveryoneRpc((int)Sound.SET);
+        PlaySFXEveryoneRpc((int)Sound.SET);
         yield return this.WaitForFullAnimation("setin");
 
         DoAnimationEveryoneRpc("startSet");
         yield return this.WaitForFullAnimation("set");
 
-        UpsideDownPortal upsideDownPortal = MapObjectsManager.SpawnUpsideDownPortalForServer(transform.position, isOutside, isFake: true);
+        UpsideDownPortal upsideDownPortal = MapObjectsManager.SpawnPortalForServer(transform.position, isOutside, isFake: true);
         DoAnimationEveryoneRpc("startSetOut");
         yield return this.WaitForFullAnimation("setout");
 
@@ -147,7 +147,7 @@ public class DemogorgonHunterAI : DemogorgonAI
     public IEnumerator DigCoroutine(bool isInUpsideDown)
     {
         DoAnimationEveryoneRpc("startDig");
-        PlayAudioEveryoneRpc((int)Sound.DIG);
+        PlaySFXEveryoneRpc((int)Sound.DIG);
         yield return this.WaitForFullAnimation("dig");
 
         DoAnimationEveryoneRpc("startDigIn");

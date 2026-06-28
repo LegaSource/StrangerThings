@@ -6,9 +6,11 @@ internal class Constants
     public const string GLOBAL = "_Global_";
     public const string MIRROR_SCRAPS = "Mirror Scraps";
     public const string UPSIDE_DOWN = "Upside Down";
-    public const string CORRUPTED_PORTALS = "Corrupted Portals";
+    public const string BATS_HORDE = "Bats Horde";
+    public const string VINES_ZONE = "Vines Zone";
     // Enemies
     public const string DEMOGORGON = "Demogorgon";
+    public const string HENRY_CREEL = "Henry Creel";
     public const string VECNA = "Vecna";
     public const string CRUSTAPIKAN = "Crustapikan";
     public const string CRUSTAPIKAN_LARVAE = "Crustapikan Larvae";

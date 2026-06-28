@@ -10,30 +10,52 @@ namespace StrangerThings.Managers;
 
 public static class MapObjectsManager
 {
-    public static HashSet<UpsideDownPortal> upsideDownPortals = [];
-    public static HashSet<AntennaHazard> antennaHazards = [];
+    private static readonly HashSet<AntennaHazard> AntennaHazards = [];
+    private static readonly HashSet<UpsideDownPortal> UpsideDownPortals = [];
 
-    public static void AddUpsideDownPortal(UpsideDownPortal upsideDownPortal) => _ = upsideDownPortals.Add(upsideDownPortal);
-    public static UpsideDownPortal[] GetUpsideDownPortals()
+    public static void AddAntenna(AntennaHazard antennaHazard) => _ = AntennaHazards.Add(antennaHazard);
+    public static HashSet<AntennaHazard> GetAntennaHazards()
     {
-        _ = upsideDownPortals.RemoveWhere(p => p == null);
-        return upsideDownPortals.Where(p => !p.isFake).ToArray();
+        _ = AntennaHazards.RemoveWhere(p => p == null);
+        return AntennaHazards;
+    }
+
+    public static bool IsNearAntenna(PlayerControllerB player)
+    {
+        foreach (AntennaHazard antennaHazard in GetAntennaHazards())
+        {
+            if (antennaHazard != null && antennaHazard.antennaItem != null)
+            {
+                float distance = Vector3.SqrMagnitude(antennaHazard.transform.position - player.transform.position);
+                if (distance < 5625f)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    public static void AddPortal(UpsideDownPortal upsideDownPortal) => _ = UpsideDownPortals.Add(upsideDownPortal);
+    public static void ClearPortals() => UpsideDownPortals.Clear();
+    public static HashSet<UpsideDownPortal> GetUpsideDownPortals()
+    {
+        _ = UpsideDownPortals.RemoveWhere(p => p == null);
+        return UpsideDownPortals.Where(p => !p.isFake).ToHashSet();
     }
 
     public static void SpawnPortalsForServer()
     {
-        if (GetUpsideDownPortals().Length < 8)
+        if (GetUpsideDownPortals().Count < 8)
         {
             LFCMapObjectsManager.SpawnScatteredMapObjectsForServer(mapObjectsAmount: 8,
                 minInside: 2,
                 minOutside: 2,
-                spawnAction: (position, isOutside) => { _ = SpawnUpsideDownPortalForServer(position, isOutside); });
+                spawnAction: (position, isOutside) => { _ = SpawnPortalForServer(position, isOutside); });
         }
     }
 
-    public static UpsideDownPortal SpawnUpsideDownPortalForServer(Vector3 position, bool isOutside, bool isFake = false)
+    public static UpsideDownPortal SpawnPortalForServer(Vector3 position, bool isOutside, bool isFake = false)
     {
-        GameObject gameObject = Object.Instantiate(StrangerThings.upsideDownPortal, position + (Vector3.down * 0.1f), Quaternion.identity, RoundManager.Instance.mapPropsContainer.transform);
+        GameObject gameObject = Object.Instantiate(StrangerThings.UpsideDownPortalObj, position + (Vector3.down * 0.1f), Quaternion.identity, RoundManager.Instance.mapPropsContainer.transform);
         gameObject.GetComponent<NetworkObject>().Spawn(true);
         UpsideDownPortal upsideDownPortal = gameObject.GetComponent<UpsideDownPortal>();
         upsideDownPortal.InitializeEveryoneRpc(isOutside, isFake);
@@ -59,23 +81,22 @@ public static class MapObjectsManager
         return closest;
     }
 
-    public static void AddAntennaHazards(AntennaHazard antennaHazard) => _ = antennaHazards.Add(antennaHazard);
-    public static HashSet<AntennaHazard> GetAntennaHazards()
+    public static UpsideDownPortal GetFurthestPortal(Vector3 position)
     {
-        _ = antennaHazards.RemoveWhere(p => p == null);
-        return antennaHazards;
-    }
-
-    public static bool IsNearAntennaHazard(PlayerControllerB player)
-    {
-        foreach (AntennaHazard antennaHazard in GetAntennaHazards())
+        UpsideDownPortal furthest = null;
+        float furthestDistance = 0f;
+        foreach (UpsideDownPortal portal in GetUpsideDownPortals())
         {
-            if (antennaHazard != null && antennaHazard.antennaItem != null && antennaHazard.antennaItem.insertedBattery != null && !antennaHazard.antennaItem.insertedBattery.empty)
+            if (portal != null)
             {
-                float distance = Vector3.SqrMagnitude(antennaHazard.transform.position - player.transform.position);
-                if (distance < 2500f) return true;
+                float distance = Vector3.SqrMagnitude(portal.transform.position - position);
+                if (distance > furthestDistance)
+                {
+                    furthestDistance = distance;
+                    furthest = portal;
+                }
             }
         }
-        return false;
+        return furthest;
     }
 }

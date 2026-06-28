@@ -1,7 +1,7 @@
 ﻿using HarmonyLib;
 using LegaFusionCore.Utilities;
 using StrangerThings.Behaviours.Enemies;
-using StrangerThings.Behaviours.Scripts;
+using StrangerThings.Behaviours.Scripts.Projectiles;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -18,8 +18,8 @@ public class DoorLockPatch
         EnemyAICollisionDetect collision = other.GetComponent<EnemyAICollisionDetect>();
         if (collision != null && collision.mainScript is DemogorgonAI demogorgon && demogorgon.isDashing)
         {
-            Vector3 direction = (demogorgon.targetPlayer.transform.position - demogorgon.transform.position).normalized * 5f;
-            demogorgon.BreakDoorEveryoneRpc(__instance.GetComponentInParent<NetworkObject>(), direction);
+            //Vector3 direction = (demogorgon.targetPlayer.transform.position - demogorgon.transform.position).normalized * 5f;
+            demogorgon.BreakDoorEveryoneRpc(__instance.GetComponentInParent<NetworkObject>(), (demogorgon.targetPlayer.transform.position - demogorgon.transform.position).normalized);
 
             demogorgon.agent.speed = 0f;
             demogorgon.agent.velocity = Vector3.zero;

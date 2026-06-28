@@ -7,6 +7,7 @@ using StrangerThings.Behaviours.MapObjects;
 using StrangerThings.Managers;
 using StrangerThings.Registries;
 using System.Collections;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -15,32 +16,33 @@ namespace StrangerThings.Behaviours.Enemies;
 public class DemogorgonKidnapperAI : DemogorgonAI
 {
     public Transform GrabPoint;
-    public Transform cameraPivot;
-    public Camera camera;
-    public Camera playerCamera;
+    public Transform CameraPivot;
+    public Camera Camera;
+    public Camera PlayerCamera;
 
     public Coroutine setCoroutine;
     public Coroutine dropCoroutine;
 
-    public UpsideDownPortal openedPortal;
-    public PlayerControllerB carriedPlayer;
-    public DeadBodyInfo fakeBody;
+    protected UpsideDownPortal openedPortal;
+    protected PlayerControllerB carriedPlayer;
+    protected DeadBodyInfo fakeBody;
 
-    protected override void OnDemogorgonStart()
-        => playerCamera = LFCUtilities.LocalPlayer?.gameplayCamera;
+    protected override void OnDemogorgonStart() => PlayerCamera = LFCUtilities.LocalPlayer?.gameplayCamera;
 
     protected override void UpdateNonChasingTargetPlayer(PlayerControllerB player)
     {
-        if (camera.enabled && camera == player.gameplayCamera && LFCUtilities.ShouldBeLocalPlayer(player))
+        if (Camera.enabled && Camera == player.gameplayCamera && LFCUtilities.ShouldBeLocalPlayer(player))
         {
             Vector2 lookInput = player.playerActions.Movement.Look.ReadValue<Vector2>() * IngamePlayerSettings.Instance.settings.lookSensitivity * 0.008f;
-            cameraPivot.Rotate(new Vector3(0f, lookInput.x, 0f));
+            CameraPivot.Rotate(new Vector3(0f, lookInput.x, 0f));
 
-            float verticalAngle = cameraPivot.localEulerAngles.x - lookInput.y;
+            float verticalAngle = CameraPivot.localEulerAngles.x - lookInput.y;
             verticalAngle = (verticalAngle > 180f) ? (verticalAngle - 360f) : verticalAngle;
             verticalAngle = Mathf.Clamp(verticalAngle, -45f, 45f);
-            cameraPivot.localEulerAngles = new Vector3(verticalAngle, cameraPivot.localEulerAngles.y, 0f);
+            CameraPivot.localEulerAngles = new Vector3(verticalAngle, CameraPivot.localEulerAngles.y, 0f);
         }
+        if (player == carriedPlayer)
+            player.transform.position = transform.position;
     }
 
     public override void CancelActionsForServer()
@@ -95,13 +97,13 @@ public class DemogorgonKidnapperAI : DemogorgonAI
         agent.speed = 0f;
 
         DoAnimationEveryoneRpc("startSetIn");
-        PlayAudioEveryoneRpc((int)Sound.SET);
+        PlaySFXEveryoneRpc((int)Sound.SET);
         yield return this.WaitForFullAnimation("setin");
 
         DoAnimationEveryoneRpc("startSet");
         yield return this.WaitForFullAnimation("set");
 
-        openedPortal = MapObjectsManager.SpawnUpsideDownPortalForServer(transform.position, isOutside, isFake: true);
+        openedPortal = MapObjectsManager.SpawnPortalForServer(transform.position, isOutside, isFake: true);
         DoAnimationEveryoneRpc("startSetOut");
         yield return this.WaitForFullAnimation("setout");
         yield return DigCoroutine(DimensionRegistry.IsInUpsideDown(targetPlayer.gameObject), openedPortal);
@@ -137,6 +139,11 @@ public class DemogorgonKidnapperAI : DemogorgonAI
         if (closestPortal == null)
         {
             SwitchToBehaviourClientRpc((int)State.CHASING);
+            return;
+        }
+        if (closestPortal.isOutside != isOutside)
+        {
+            this.GoTowardsEntrance();
             return;
         }
         if (Vector3.Distance(transform.position, closestPortal.transform.position) <= 1f)
@@ -195,14 +202,15 @@ public class DemogorgonKidnapperAI : DemogorgonAI
 
             if (LFCUtilities.ShouldBeLocalPlayer(player))
             {
-                if (camera != null) camera.enabled = false;
-                player.gameplayCamera = playerCamera;
+                if (Camera != null)
+                    Camera.enabled = false;
+                player.gameplayCamera = PlayerCamera;
             }
 
             if (LFCUtilities.IsServer)
             {
-                if (isInUpsideDown) CorruptPortalForServer(player);
                 LFCNetworkManager.Instance.TeleportPlayerEveryoneRpc((int)player.playerClientId, transform.position, isInElevator: false, isInHangarShipRoom: false, !isOutside);
+                if (isInUpsideDown) CorruptPortalForServer(player);
             }
         }
 
@@ -219,10 +227,10 @@ public class DemogorgonKidnapperAI : DemogorgonAI
 
     public void CorruptPortalForServer(PlayerControllerB player)
     {
-        UpsideDownPortal[] upsideDownPortals = MapObjectsManager.GetUpsideDownPortals();
-        if (upsideDownPortals.Length != 0)
+        HashSet<UpsideDownPortal> upsideDownPortals = MapObjectsManager.GetUpsideDownPortals();
+        if (upsideDownPortals.Count != 0)
         {
-            UpsideDownPortal upsideDownPortal = upsideDownPortals[Random.Range(0, upsideDownPortals.Length)];
+            UpsideDownPortal upsideDownPortal = MapObjectsManager.GetFurthestPortal(player.transform.position);
             upsideDownPortal.CorruptPortalForServer(player);
         }
     }
@@ -254,7 +262,7 @@ public class DemogorgonKidnapperAI : DemogorgonAI
     public IEnumerator DigCoroutine(bool isInUpsideDown, UpsideDownPortal targetedPortal)
     {
         DoAnimationEveryoneRpc("startDig");
-        PlayAudioEveryoneRpc((int)Sound.DIG);
+        PlaySFXEveryoneRpc((int)Sound.DIG);
         yield return this.WaitForFullAnimation("dig");
 
         DoAnimationEveryoneRpc("startDigIn");
@@ -287,7 +295,7 @@ public class DemogorgonKidnapperAI : DemogorgonAI
         {
             if (player != null)
                 LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 80, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
-            PlayAudioEveryoneRpc((int)Sound.ROAR);
+            PlaySFXEveryoneRpc((int)Sound.ROAR);
             yield return this.WaitForFullAnimation("recover");
             DoAnimationEveryoneRpc("startMove");
         }
@@ -338,11 +346,12 @@ public class DemogorgonKidnapperAI : DemogorgonAI
         if (fakeBody.gameObject.TryGetComponentInChildren(out ScanNodeProperties scanNode) && scanNode.TryGetComponent(out Collider collider))
             collider.enabled = false;
 
-        if (LFCUtilities.ShouldBeLocalPlayer(player) && camera != null)
+        if (LFCUtilities.ShouldBeLocalPlayer(player) && Camera != null)
         {
-            if (playerCamera == null) playerCamera = player.gameplayCamera;
-            camera.enabled = true;
-            player.gameplayCamera = camera;
+            if (PlayerCamera == null)
+                PlayerCamera = player.gameplayCamera;
+            Camera.enabled = true;
+            player.gameplayCamera = Camera;
         }
     }
 }

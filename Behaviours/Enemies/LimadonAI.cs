@@ -5,6 +5,7 @@ using LegaFusionCore.Utilities;
 using StrangerThings.Managers;
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -12,12 +13,12 @@ namespace StrangerThings.Behaviours.Enemies;
 public class LimadonAI : UpsideDownEnemyAI
 {
     public Transform TurnCompass;
-    public AudioClip[] CrawlSounds = Array.Empty<AudioClip>();
-    public AudioClip[] LimadonSounds = Array.Empty<AudioClip>();
+    public LimadonSoundSerializableEntry[] LimadonSoundsEntry;
+    public Dictionary<Sound, AudioClip[]> LimadonSounds;
 
-    public float crawlTimer = 0f;
-    public float jumpTimer = 15f;
-    public float chargeTimer = 0f;
+    private float crawlTimer = 0f;
+    private float jumpTimer = 15f;
+    private float chargeTimer = 0f;
     public float jumpDuration = 1.167f;
 
     public float jumpCooldown = 20f;
@@ -34,7 +35,8 @@ public class LimadonAI : UpsideDownEnemyAI
     public Coroutine swingCoroutine;
 
     public enum State { WANDERING, CHASING }
-    public enum Sound { SPAWN, SWING, ROAR, JUMP, LAND, CHARGE }
+    public enum Sound { CRAWL, SPAWN, SWING, ROAR, JUMP, LAND, CHARGE }
+    [Serializable] public class LimadonSoundSerializableEntry : LFCUtilities.SerializableEntry<Sound, AudioClip[]> { }
 
     public override void CancelActionsForServer()
     {
@@ -60,14 +62,16 @@ public class LimadonAI : UpsideDownEnemyAI
     public override void Start()
     {
         base.Start();
+
+        LimadonSounds = LimadonSoundsEntry.ToDictionary();
         spawnCoroutine ??= StartCoroutine(SpawnCoroutine());
     }
 
     public IEnumerator SpawnCoroutine()
     {
         agent.speed = 0f;
-        if (LimadonSounds.Length > 0)
-            creatureSFX.PlayOneShot(LimadonSounds[(int)Sound.SPAWN]);
+        if (LimadonSounds.TryGetValue(Sound.SPAWN, out AudioClip[] spawnSounds) && spawnSounds.Length > 0)
+            creatureSFX.PlayOneShot(spawnSounds[UnityEngine.Random.Range(0, spawnSounds.Length)]);
         yield return this.WaitForFullAnimation("spawn");
 
         agent.speed = 2f;
@@ -116,13 +120,13 @@ public class LimadonAI : UpsideDownEnemyAI
     public void PlayCrawlSound()
     {
         AnimatorClipInfo[] currentAnimatorClipInfo = creatureAnimator.GetCurrentAnimatorClipInfo(0);
-        if (currentAnimatorClipInfo.Length != 0 && currentAnimatorClipInfo[0].clip.name.Equals("crawl"))
+        if (currentAnimatorClipInfo.Length != 0 && currentAnimatorClipInfo[0].clip.name.Contains("crawl"))
         {
             crawlTimer -= Time.deltaTime;
-            if (CrawlSounds.Length > 0 && crawlTimer <= 0)
+            if (LimadonSounds.TryGetValue(Sound.CRAWL, out AudioClip[] crawlSounds) && crawlSounds.Length > 0 && crawlTimer <= 0)
             {
-                creatureSFX.PlayOneShot(CrawlSounds[UnityEngine.Random.Range(0, CrawlSounds.Length)]);
-                crawlTimer = 1f;
+                creatureSFX.PlayOneShot(crawlSounds[UnityEngine.Random.Range(0, crawlSounds.Length)]);
+                crawlTimer = 1.25f;
             }
         }
     }
@@ -226,33 +230,24 @@ public class LimadonAI : UpsideDownEnemyAI
     {
         agent.speed = 0f;
         DoAnimationEveryoneRpc("startRoar");
-        PlayAudioEveryoneRpc((int)Sound.ROAR);
+        PlaySFXEveryoneRpc((int)Sound.ROAR);
         yield return this.WaitForFullAnimation("roar");
 
         DoAnimationEveryoneRpc("startJump");
-        PlayAudioEveryoneRpc((int)Sound.JUMP);
+        PlaySFXEveryoneRpc((int)Sound.JUMP);
 
         Vector3 landingPoint = Vector3.Distance(targetPlayer.transform.position, transform.position) > 25f ? transform.position : targetPlayer.transform.position;
-        agent.speed = 12f;
         agent.angularSpeed = 0f;
         agent.acceleration = 100f;
-        moveTowardsDestination = false;
-
+        _ = SetDestinationToPosition(landingPoint);
         _ = agent.SetDestination(landingPoint);
-        yield return null;
-
-        float distance = agent.remainingDistance;
-        if (float.IsInfinity(distance) || distance <= 0.01f)
-            distance = Vector3.Distance(transform.position, landingPoint);
-
-        float travelTime = distance / agent.speed;
-        creatureAnimator.speed = jumpDuration / travelTime;
+        agent.speed = agent.remainingDistance / jumpDuration;
 
         yield return this.WaitForFullAnimation("jump");
-        creatureAnimator.speed = 1f;
+        agent.speed = 0f;
 
         isSplashing = true;
-        PlayAudioEveryoneRpc((int)Sound.LAND);
+        PlaySFXEveryoneRpc((int)Sound.LAND);
         StrangerThingsNetworkManager.Instance.PlayPoisonExplosionEveryoneRpc(transform.position);
 
         if (enemyHP > 4 && this.TryGetSafeRandomNavMeshPosition(transform.position, 3f, out Vector3 spawnPosition))
@@ -263,7 +258,7 @@ public class LimadonAI : UpsideDownEnemyAI
 
         isSplashing = false;
         DoAnimationEveryoneRpc("startDigOut");
-        PlayAudioEveryoneRpc((int)Sound.SPAWN);
+        PlaySFXEveryoneRpc((int)Sound.SPAWN);
         yield return this.WaitForFullAnimation("spawn");
 
         CancelJumpCoroutine();
@@ -271,7 +266,7 @@ public class LimadonAI : UpsideDownEnemyAI
 
     public IEnumerator SpawnEnemyCoroutine(Vector3 position)
     {
-        GameObject gameObject = Instantiate(StrangerThings.limadonType.enemyPrefab, position, Quaternion.identity);
+        GameObject gameObject = Instantiate(StrangerThings.LimadonType.enemyPrefab, position, Quaternion.identity);
         NetworkObject networkObject = gameObject.GetComponentInChildren<NetworkObject>();
         networkObject.Spawn(destroyWithScene: true);
 
@@ -293,7 +288,6 @@ public class LimadonAI : UpsideDownEnemyAI
 
             agent.angularSpeed = 120f;
             agent.acceleration = 8f;
-            moveTowardsDestination = true;
         }
     }
 
@@ -301,7 +295,7 @@ public class LimadonAI : UpsideDownEnemyAI
     {
         agent.speed = 0f;
         DoAnimationEveryoneRpc("startCharge");
-        PlayAudioEveryoneRpc((int)Sound.CHARGE);
+        PlaySFXEveryoneRpc((int)Sound.CHARGE);
         yield return this.WaitForFullAnimation("charge");
 
         CancelChargeCoroutine();
@@ -350,7 +344,7 @@ public class LimadonAI : UpsideDownEnemyAI
     {
         agent.speed = 0f;
         DoAnimationEveryoneRpc("startSwing");
-        PlayAudioEveryoneRpc((int)Sound.SWING);
+        PlaySFXEveryoneRpc((int)Sound.SWING);
         yield return this.WaitForFullAnimation("swing");
 
         LFCNetworkManager.Instance.DamagePlayerEveryoneRpc(playerId, 10, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
@@ -385,10 +379,10 @@ public class LimadonAI : UpsideDownEnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlayAudioEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int enemySound)
     {
-        if (LimadonSounds.Length > 0)
-            creatureSFX.PlayOneShot(LimadonSounds[enemySound]);
+        if (LimadonSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+            creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]

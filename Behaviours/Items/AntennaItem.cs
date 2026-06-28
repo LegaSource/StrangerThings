@@ -14,10 +14,10 @@ namespace StrangerThings.Behaviours.Items;
 
 public class AntennaItem : Shovel
 {
+    public AudioSource AntennaAudio;
     public int antennaHitForce = 3;
     public RaycastHit[] objectsHitByAntenna;
     public List<RaycastHit> objectsHitByAntennaList = [];
-    public AudioSource antennaAudio;
 
     public override void ItemActivate(bool used, bool buttonDown = true)
     {
@@ -57,14 +57,14 @@ public class AntennaItem : Shovel
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void ReelUpSFXEveryoneRpc() => antennaAudio.PlayOneShot(reelUp);
+    public void ReelUpSFXEveryoneRpc() => AntennaAudio.PlayOneShot(reelUp);
 
     public void SwingAntenna(bool cancel = false)
     {
         previousPlayerHeldBy.playerBodyAnimator.SetBool("reelingUp", value: false);
         if (!cancel)
         {
-            antennaAudio.PlayOneShot(swing);
+            AntennaAudio.PlayOneShot(swing);
             previousPlayerHeldBy.UpdateSpecialAnimationValue(specialAnimation: true, (short)previousPlayerHeldBy.transform.localEulerAngles.y, 0.4f);
         }
     }
@@ -81,14 +81,17 @@ public class AntennaItem : Shovel
         int footstepSurfaceIndex = -1;
         if (!cancel)
         {
+            HashSet<ulong> affectedIds = [];
             previousPlayerHeldBy.twoHanded = false;
-            objectsHitByAntenna = Physics.SphereCastAll(previousPlayerHeldBy.gameplayCamera.transform.position + (previousPlayerHeldBy.gameplayCamera.transform.right * 0.1f), 0.5f, previousPlayerHeldBy.gameplayCamera.transform.forward, 0.75f, shovelMask, QueryTriggerInteraction.Collide);
+            objectsHitByAntenna = Physics.SphereCastAll(previousPlayerHeldBy.gameplayCamera.transform.position + (previousPlayerHeldBy.gameplayCamera.transform.right * -0.35f), 0.8f, previousPlayerHeldBy.gameplayCamera.transform.forward, 1.5f, shovelMask, QueryTriggerInteraction.Collide);
             objectsHitByAntennaList = objectsHitByAntenna.OrderBy((RaycastHit x) => x.distance).ToList();
 
             foreach (RaycastHit antennaHit in objectsHitByAntennaList)
             {
                 if (antennaHit.transform.gameObject.layer == 8 || antennaHit.transform.gameObject.layer == 11)
                 {
+                    if (antennaHit.collider.isTrigger) continue;
+
                     hitDetected = true;
                     for (int i = 0; i < StartOfRound.Instance.footstepSurfaces.Length; i++)
                     {
@@ -102,17 +105,19 @@ public class AntennaItem : Shovel
                 else
                 {
                     if (!antennaHit.transform.TryGetComponent(out IHittable component) || antennaHit.transform == previousPlayerHeldBy.transform) continue;
-                    if (!(antennaHit.point == Vector3.zero) && Physics.Linecast(previousPlayerHeldBy.gameplayCamera.transform.position, antennaHit.point, out RaycastHit hitInfo, StartOfRound.Instance.collidersAndRoomMaskAndDefault)) continue;
+                    if (!(antennaHit.point == Vector3.zero) && Physics.Linecast(previousPlayerHeldBy.gameplayCamera.transform.position, antennaHit.point, out RaycastHit _, StartOfRound.Instance.collidersAndRoomMaskAndDefault, QueryTriggerInteraction.Ignore)) continue;
 
                     hitDetected = true;
-                    _ = component.Hit(antennaHitForce, previousPlayerHeldBy.gameplayCamera.transform.forward, previousPlayerHeldBy, playHitSFX: true, 5);
-
+                    if (antennaHit.transform.TryGetComponent(out EnemyAICollisionDetect enemyCollision) && enemyCollision.mainScript != null && affectedIds.Add(enemyCollision.mainScript.NetworkObjectId))
+                        _ = component.Hit(antennaHitForce, previousPlayerHeldBy.gameplayCamera.transform.forward, previousPlayerHeldBy, playHitSFX: true, 1);
+                    else if (antennaHit.transform.TryGetComponent(out PlayerControllerB player) && affectedIds.Add(LFCUtilities.EncodePlayerId(player.playerClientId)))
+                        _ = component.Hit(antennaHitForce, previousPlayerHeldBy.gameplayCamera.transform.forward, previousPlayerHeldBy, playHitSFX: true, 1);
                 }
             }
         }
         if (hitDetected)
         {
-            _ = RoundManager.PlayRandomClip(antennaAudio, hitSFX);
+            _ = RoundManager.PlayRandomClip(AntennaAudio, hitSFX);
             FindObjectOfType<RoundManager>().PlayAudibleNoise(transform.position, 17f, 0.8f);
             HitAntennaEveryoneRpc(footstepSurfaceIndex);
         }
@@ -121,11 +126,11 @@ public class AntennaItem : Shovel
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
     public void HitAntennaEveryoneRpc(int hitSurfaceID)
     {
-        _ = RoundManager.PlayRandomClip(antennaAudio, hitSFX);
+        _ = RoundManager.PlayRandomClip(AntennaAudio, hitSFX);
         if (hitSurfaceID != -1)
         {
-            antennaAudio.PlayOneShot(StartOfRound.Instance.footstepSurfaces[hitSurfaceID].hitSurfaceSFX);
-            WalkieTalkie.TransmitOneShotAudio(antennaAudio, StartOfRound.Instance.footstepSurfaces[hitSurfaceID].hitSurfaceSFX);
+            AntennaAudio.PlayOneShot(StartOfRound.Instance.footstepSurfaces[hitSurfaceID].hitSurfaceSFX);
+            WalkieTalkie.TransmitOneShotAudio(AntennaAudio, StartOfRound.Instance.footstepSurfaces[hitSurfaceID].hitSurfaceSFX);
         }
         DestroyObjectInHand(playerHeldBy);
     }
@@ -151,7 +156,7 @@ public class AntennaItem : Shovel
         if (Physics.Raycast(position, Vector3.down, out RaycastHit hit, 5f, StartOfRound.Instance.collidersAndRoomMaskAndDefault))
         {
             Quaternion rotation = StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>().transform.rotation;
-            GameObject gameObject = Instantiate(StrangerThings.antennaHazard, hit.point, Quaternion.Euler(0f, rotation.eulerAngles.y, rotation.eulerAngles.z), RoundManager.Instance.mapPropsContainer.transform);
+            GameObject gameObject = Instantiate(StrangerThings.AntennaHazardObj, hit.point, Quaternion.Euler(0f, rotation.eulerAngles.y, rotation.eulerAngles.z), RoundManager.Instance.mapPropsContainer.transform);
             NetworkObject spawnedNetworkObject = gameObject.GetComponent<NetworkObject>();
             spawnedNetworkObject.Spawn(true);
             SpawnAntennaHazardEveryoneRpc(playerId, spawnedNetworkObject);
@@ -175,15 +180,9 @@ public class AntennaItem : Shovel
             AntennaHazard antennaHazard = networkObject.gameObject.GetComponentInChildren<AntennaHazard>();
             antennaHazard.antennaItem = this;
             antennaHazard.previousPlayerHeldBy = player;
-            MapObjectsManager.AddAntennaHazards(antennaHazard);
+            MapObjectsManager.AddAntenna(antennaHazard);
             LFCMapObjectsManager.AttachMapObjectForEveryone(player, antennaHazard.gameObject);
         }
-    }
-
-    public override void UseUpBatteries()
-    {
-        base.UseUpBatteries();
-        insertedBattery = new Battery(isEmpty: true, chargeNumber: 0f);
     }
 
     public override void EquipItem()

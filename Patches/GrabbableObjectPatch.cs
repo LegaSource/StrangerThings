@@ -1,6 +1,5 @@
 ﻿using HarmonyLib;
 using LegaFusionCore.Utilities;
-using StrangerThings.Behaviours.Items;
 using StrangerThings.Registries;
 
 namespace StrangerThings.Patches;
@@ -29,17 +28,5 @@ public class GrabbableObjectPatch
     {
         if (!DimensionRegistry.AreInSameDimension(LFCUtilities.LocalPlayer?.gameObject, __instance.gameObject))
             DimensionRegistry.UpdateVisibilityState(__instance.gameObject);
-    }
-
-    [HarmonyPatch(typeof(GrabbableObject), nameof(GrabbableObject.UseItemBatteries))]
-    [HarmonyPrefix]
-    private static bool UseItemBatteries(GrabbableObject __instance, ref bool __result)
-    {
-        if (__instance is AntennaItem)
-        {
-            __result = true;
-            return false;
-        }
-        return true;
     }
 }

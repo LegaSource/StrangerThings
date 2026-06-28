@@ -2,7 +2,7 @@
 using LegaFusionCore.Managers;
 using LegaFusionCore.Managers.NetworkManagers;
 using LegaFusionCore.Utilities;
-using StrangerThings.Behaviours.Scripts;
+using StrangerThings.Behaviours.Scripts.Projectiles;
 using StrangerThings.Registries;
 using System;
 using System.Collections;
@@ -17,13 +17,13 @@ public class CrustapikanAI : UpsideDownEnemyAI
 {
     public Transform TurnCompass;
     public Transform GrabPoint;
-    public AudioClip[] FootstepSounds = Array.Empty<AudioClip>();
-    public AudioClip[] CrustapikanSounds = Array.Empty<AudioClip>();
+    public CrustapikanSoundSerializableEntry[] CrustapikanSoundsEntry;
+    public Dictionary<Sound, AudioClip[]> CrustapikanSounds;
 
-    public float footstepTimer = 0f;
-    public float lookTimer = 10f;
-    public float callTimer = 30f;
-    public float grabTimer = 0f;
+    private float moveTimer = 0f;
+    private float lookTimer = 10f;
+    private float callTimer = 30f;
+    private float grabTimer = 0f;
 
     public float lookCooldown = 20f;
     public float callCooldown = 60f;
@@ -40,11 +40,16 @@ public class CrustapikanAI : UpsideDownEnemyAI
     public Coroutine throwCoroutine;
     public Coroutine swingCoroutine;
 
-    public RockProjectile rockProjectile;
-    public Vector3 lastSeenPosition;
+    protected RockProjectile rockProjectile;
+    protected Vector3 lastSeenPosition;
+
+    private readonly Collider[] overlapBuffer = new Collider[64];
+    private readonly float AoERadius = 100f;
+    private readonly int AoEMask = 524288;
 
     public enum State { WANDERING, CHASING, CARRYING }
-    public enum Sound { SMASH, ROAR, GRAB, THROW, SWING }
+    public enum Sound { MOVE, SMASH, ROAR, GRAB, THROW, SWING }
+    [Serializable] public class CrustapikanSoundSerializableEntry : LFCUtilities.SerializableEntry<Sound, AudioClip[]> { }
 
     public override void CancelActionsForServer()
     {
@@ -72,6 +77,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
     {
         base.Start();
 
+        CrustapikanSounds = CrustapikanSoundsEntry.ToDictionary();
         currentBehaviourStateIndex = (int)State.WANDERING;
         StartSearch(transform.position);
     }
@@ -81,7 +87,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
         base.Update();
         if (isEnemyDead || stunCoroutine != null) return;
 
-        PlayFootstepSound();
+        PlayMoveSound();
         int state = currentBehaviourStateIndex;
         if (targetPlayer != null && (state == (int)State.CHASING || state == (int)State.CARRYING))
         {
@@ -93,16 +99,16 @@ public class CrustapikanAI : UpsideDownEnemyAI
         LFCUtilities.UpdateTimer(ref grabTimer, grabCooldown, !canGrab, () => canGrab = true);
     }
 
-    public void PlayFootstepSound()
+    public void PlayMoveSound()
     {
         AnimatorClipInfo[] currentAnimatorClipInfo = creatureAnimator.GetCurrentAnimatorClipInfo(0);
         if (currentAnimatorClipInfo.Length != 0 && currentAnimatorClipInfo[0].clip.name.Contains("move"))
         {
-            footstepTimer -= Time.deltaTime;
-            if (FootstepSounds.Length > 0 && footstepTimer <= 0)
+            moveTimer -= Time.deltaTime;
+            if (CrustapikanSounds.TryGetValue(Sound.MOVE, out AudioClip[] moveSounds) && moveSounds.Length > 0 && moveTimer <= 0)
             {
-                creatureSFX.PlayOneShot(FootstepSounds[UnityEngine.Random.Range(0, FootstepSounds.Length)]);
-                footstepTimer = 1.25f;
+                creatureSFX.PlayOneShot(moveSounds[UnityEngine.Random.Range(0, moveSounds.Length)]);
+                moveTimer = 1.25f;
             }
         }
     }
@@ -186,6 +192,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
             {
                 DoAnimationEveryoneRpc("startMove");
                 SwitchToBehaviourClientRpc((int)State.CHASING);
+                lookCoroutine = null;
                 yield break;
             }
 
@@ -241,14 +248,15 @@ public class CrustapikanAI : UpsideDownEnemyAI
         DoAnimationEveryoneRpc("startSmash");
         yield return new WaitForSeconds(2.15f);
 
-        PlayAudioEveryoneRpc((int)Sound.SMASH);
-        PlayParticleEveryoneRpc($"{LegaFusionCore.LegaFusionCore.modName}{LegaFusionCore.LegaFusionCore.groundParticle.name}", transform.position + transform.forward, Quaternion.identity, scaleFactor: 0.5f);
+        PlaySFXEveryoneRpc((int)Sound.SMASH);
+        PlayParticleEveryoneRpc($"{LegaFusionCore.LegaFusionCore.modName}{LegaFusionCore.Constants.GROUND_PARTICLES}", transform.position + transform.forward, Quaternion.identity, scaleFactor: 0.5f);
         yield return this.WaitForFullAnimation("smash");
 
         HashSet<UpsideDownEnemyAI> syncedEnemies = [];
-        foreach (Collider hitCollider in Physics.OverlapSphere(transform.position, 100f, 524288, QueryTriggerInteraction.Collide))
+        int count = Physics.OverlapSphereNonAlloc(transform.position, AoERadius, overlapBuffer, AoEMask, QueryTriggerInteraction.Collide);
+        for (int i = 0; i < count; i++)
         {
-            EnemyAI enemy = hitCollider.GetComponent<EnemyAICollisionDetect>()?.mainScript;
+            EnemyAI enemy = overlapBuffer[i].GetComponent<EnemyAICollisionDetect>()?.mainScript;
             if (enemy == null || enemy == this || enemy.isEnemyDead || !DimensionRegistry.AreInSameDimension(gameObject, enemy.gameObject)) continue;
             if (enemy is not UpsideDownEnemyAI upsideDownEnemy || Vector3.Distance(upsideDownEnemy.transform.position, transform.position) > upsideDownEnemy.syncDistance) continue;
 
@@ -256,7 +264,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
             _ = syncedEnemies.Add(upsideDownEnemy);
         }
 
-        UpsideDownEnemyAI crustopikanLarvaeEnemy = SpawnEnemyForServer(StrangerThings.crustopikanLarvaeType, transform.position, 5f);
+        UpsideDownEnemyAI crustopikanLarvaeEnemy = SpawnEnemyForServer(StrangerThings.CrustopikanLarvaeType, transform.position, 5f);
         if (crustopikanLarvaeEnemy != null)
         {
             crustopikanLarvaeEnemy.SetSyncedTarget(targetPlayer);
@@ -265,7 +273,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
         if (syncedEnemies.Any(e => e.targetPlayer == null))
         {
-            PlayAudioEveryoneRpc((int)Sound.ROAR);
+            PlaySFXEveryoneRpc((int)Sound.ROAR);
             DoAnimationEveryoneRpc("startRoar");
             yield return this.WaitForFullAnimation("roar");
 
@@ -280,7 +288,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
     public void PlayParticleEveryoneRpc(string tag, Vector3 position, Quaternion rotation, float scaleFactor)
-        => LFCGlobalManager.PlayParticle(tag, position, rotation, scaleFactor, DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject));
+        => LFCGlobalManager.PlayParticle(tag, position, rotation, scaleFactor: scaleFactor, active: DimensionRegistry.IsInUpsideDown(LFCUtilities.LocalPlayer?.gameObject));
 
     public void CancelCallCoroutine()
     {
@@ -295,7 +303,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
     public IEnumerator GrabCoroutine()
     {
         agent.speed = 0f;
-        PlayAudioEveryoneRpc((int)Sound.GRAB);
+        PlaySFXEveryoneRpc((int)Sound.GRAB);
         DoAnimationEveryoneRpc("startGrab");
         yield return new WaitForSeconds(1.7f);
 
@@ -309,7 +317,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
 
     public void SpawnRockForServer()
     {
-        GameObject gameObject = Instantiate(StrangerThings.rockProjectileObj, GrabPoint.position, GrabPoint.rotation);
+        GameObject gameObject = Instantiate(StrangerThings.RockProjectileObj, GrabPoint.position, GrabPoint.rotation);
         NetworkObject networkObject = gameObject.GetComponent<NetworkObject>();
         networkObject.Spawn();
         SpawnRockEveryoneRpc(networkObject);
@@ -332,7 +340,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
         {
             StopCoroutine(grabCoroutine);
             grabCoroutine = null;
-            rockProjectile?.ThrowRockEveryoneRpc(thisNetworkObject, transform.position);
+            rockProjectile?.ThrowFromPositionEveryoneRpc(thisNetworkObject, GrabPoint.transform.position, transform.position - GrabPoint.transform.position);
             rockProjectile = null;
         }
     }
@@ -365,11 +373,11 @@ public class CrustapikanAI : UpsideDownEnemyAI
     public IEnumerator ThrowCoroutine()
     {
         agent.speed = 0f;
-        PlayAudioEveryoneRpc((int)Sound.THROW);
+        PlaySFXEveryoneRpc((int)Sound.THROW);
         DoAnimationEveryoneRpc("startThrow");
         yield return new WaitForSeconds(0.8f);
 
-        rockProjectile?.ThrowRockEveryoneRpc(thisNetworkObject, lastSeenPosition);
+        rockProjectile?.ThrowFromPositionEveryoneRpc(thisNetworkObject, GrabPoint.transform.position, lastSeenPosition + (Vector3.up * 1.5f) - GrabPoint.transform.position);
         rockProjectile = null;
         yield return this.WaitForFullAnimation("throw");
 
@@ -388,7 +396,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
             throwCoroutine = null;
             canGrab = true;
             grabTimer = 0f;
-            rockProjectile?.ThrowRockEveryoneRpc(thisNetworkObject, transform.position);
+            rockProjectile?.ThrowFromPositionEveryoneRpc(thisNetworkObject, GrabPoint.transform.position, transform.position - GrabPoint.transform.position);
             rockProjectile = null;
         }
     }
@@ -423,7 +431,7 @@ public class CrustapikanAI : UpsideDownEnemyAI
     {
         agent.speed = 0f;
         DoAnimationEveryoneRpc("startSwing");
-        PlayAudioEveryoneRpc((int)Sound.SWING);
+        PlaySFXEveryoneRpc((int)Sound.SWING);
         yield return new WaitForSeconds(2.08f);
 
         LFCNetworkManager.Instance.DamagePlayerEveryoneRpc(playerId, 100, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
@@ -457,10 +465,10 @@ public class CrustapikanAI : UpsideDownEnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlayAudioEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int enemySound)
     {
-        if (CrustapikanSounds.Length > 0)
-            creatureSFX.PlayOneShot(CrustapikanSounds[enemySound]);
+        if (CrustapikanSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+            creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]

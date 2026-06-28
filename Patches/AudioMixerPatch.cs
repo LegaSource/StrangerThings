@@ -28,10 +28,10 @@ public class AudioMixerPatch
         {
             multiplier = DimensionRegistry.IsInUpsideDown(localPlayer.gameObject)
                 ? (localPlayer.speakingToWalkieTalkie && targetedPlayer.holdingWalkieTalkie) || (targetedPlayer.speakingToWalkieTalkie && localPlayer.holdingWalkieTalkie)
-                    ? MapObjectsManager.IsNearAntennaHazard(localPlayer) ? 1f : 0f
+                    ? MapObjectsManager.IsNearAntenna(localPlayer) ? 1f : 0f
                     : 0.1f
                 : (localPlayer.speakingToWalkieTalkie && targetedPlayer.holdingWalkieTalkie) || (targetedPlayer.speakingToWalkieTalkie && localPlayer.holdingWalkieTalkie)
-                    ? MapObjectsManager.IsNearAntennaHazard(targetedPlayer) ? 1f : 0f
+                    ? MapObjectsManager.IsNearAntenna(targetedPlayer) ? 1f : 0f
                     : 0f;
         }
         value *= multiplier;

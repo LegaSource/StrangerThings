@@ -11,9 +11,13 @@ public abstract class UpsideDownEnemyAI : EnemyAI
     protected PlayerControllerB syncedTarget;
 
     public bool isSynced = false;
-    public float syncTimer = 0f;
+    private float syncTimer = 0f;
     public float syncDuration = 30f;
     public float syncDistance = 50f;
+
+    private readonly Collider[] overlapBuffer = new Collider[64];
+    private readonly float AoERadius = 100f;
+    private readonly int AoEMask = 524288;
 
     public override void Update()
     {
@@ -21,7 +25,11 @@ public abstract class UpsideDownEnemyAI : EnemyAI
         LFCUtilities.UpdateTimer(ref syncTimer, syncDuration, isSynced, () => { isSynced = false; syncedTarget = null; });
     }
 
-    public virtual void SetSyncedTarget(PlayerControllerB syncedTarget) => this.syncedTarget = syncedTarget;
+    public virtual void SetSyncedTarget(PlayerControllerB syncedTarget)
+    {
+        isSynced = true;
+        this.syncedTarget = syncedTarget;
+    }
     public abstract void ForceSend();
 
     public override void HitEnemy(int force = 1, PlayerControllerB playerWhoHit = null, bool playHitSFX = false, int hitID = -1)
@@ -32,9 +40,10 @@ public abstract class UpsideDownEnemyAI : EnemyAI
         // Si hors Upside Down (Demogorgon), on ne vérifie pas les monstres proches
         if (!DimensionRegistry.IsInUpsideDown(gameObject))
         {
-            foreach (Collider hitCollider in Physics.OverlapSphere(transform.position, 100f, 524288, QueryTriggerInteraction.Collide))
+            int count = Physics.OverlapSphereNonAlloc(transform.position, AoERadius, overlapBuffer, AoEMask, QueryTriggerInteraction.Collide);
+            for (int i = 0; i < count; i++)
             {
-                EnemyAI enemy = hitCollider.GetComponent<EnemyAICollisionDetect>()?.mainScript;
+                EnemyAI enemy = overlapBuffer[i].GetComponent<EnemyAICollisionDetect>()?.mainScript;
                 if (enemy != null && enemy != this && !enemy.isEnemyDead && enemy is CrustapikanAI)
                 {
                     isCrustapikanClose = true;
