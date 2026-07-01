@@ -94,7 +94,7 @@ public class RockProjectile : NetworkBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (!LFCUtilities.IsServer || collision == null || !isThrown) return;
+        if (!LFCUtilities.IsServer || collision == null || !isThrown || !NetworkObject.IsSpawned) return;
         if (collision.collider != null && (collision.collider.gameObject.TryGetComponentInParent(out PlayerControllerB _) || collision.collider.gameObject.TryGetComponentInParent(out EnemyAI _)))
             return;
 
@@ -108,7 +108,7 @@ public class RockProjectile : NetworkBehaviour
 
     private void OnTriggerEnter(Collider collider)
     {
-        if (LFCUtilities.IsServer && isThrown && collider != null && collider.TryGetComponent(out PlayerControllerB player) && DimensionRegistry.AreInSameDimension(player.gameObject, gameObject))
+        if (LFCUtilities.IsServer && isThrown && NetworkObject.IsSpawned && collider != null && collider.TryGetComponent(out PlayerControllerB player) && DimensionRegistry.AreInSameDimension(player.gameObject, gameObject))
         {
             LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 50, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
             SpawnRockExplosionEveryoneRpc(transform.position, withParticle: true, withAudio: true);

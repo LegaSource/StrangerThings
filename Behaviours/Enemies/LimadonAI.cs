@@ -70,8 +70,7 @@ public class LimadonAI : UpsideDownEnemyAI
     public IEnumerator SpawnCoroutine()
     {
         agent.speed = 0f;
-        if (LimadonSounds.TryGetValue(Sound.SPAWN, out AudioClip[] spawnSounds) && spawnSounds.Length > 0)
-            creatureSFX.PlayOneShot(spawnSounds[UnityEngine.Random.Range(0, spawnSounds.Length)]);
+        PlaySFX(Sound.SPAWN);
         yield return this.WaitForFullAnimation("spawn");
 
         agent.speed = 2f;
@@ -379,9 +378,11 @@ public class LimadonAI : UpsideDownEnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlaySFXEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int soundId) => PlaySFX((Sound)soundId);
+
+    public void PlaySFX(Sound enemySound)
     {
-        if (LimadonSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+        if (LimadonSounds.TryGetValue(enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
             creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 

@@ -26,14 +26,14 @@ public class HenryAI : EnemyAI
     public Dictionary<Voice, AudioClip[]> HenryVoices;
 
     private float moveTimer = 0f;
-    private float speakTimer = 0f;
+    private float speakTimer = 5f;
     private float doorGrabTimer = 0f;
     private float treeGrabTimer = 0f;
     private float rockGrabTimer = 0f;
     private float pebbleGrabTimer = 0f;
     private float doorThrowTimer = 0f;
 
-    public float speakCooldown = 3f;
+    public float speakCooldown = 5f;
     public float doorGrabCooldown = 20f;
     public float treeGrabCooldown = 20f;
     public float rockGrabCooldown = 10f;
@@ -65,7 +65,7 @@ public class HenryAI : EnemyAI
     private readonly Collider[] overlapBuffer = new Collider[64];
 
     public enum State { WANDERING, CHASING }
-    public enum Sound { MOVE, GRAB, THROW, SWING }
+    public enum Sound { MOVE, GRAB, THROW, SWING, DEATH }
     public enum Voice { DETECT, ANGRY, FOCUS }
 
     [Serializable] public class HenrySoundSerializableEntry : LFCUtilities.SerializableEntry<Sound, AudioClip[]> { }
@@ -106,7 +106,7 @@ public class HenryAI : EnemyAI
         LFCUtilities.UpdateTimer(ref rockGrabTimer, rockGrabCooldown, !canRockGrab && !hasDoor, () => canRockGrab = true);
         LFCUtilities.UpdateTimer(ref pebbleGrabTimer, pebbleGrabCooldown, !canPebbleGrab && !hasDoor, () => canPebbleGrab = true);
         LFCUtilities.UpdateTimer(ref treeGrabTimer, treeGrabCooldown, !canTreeGrab, () => canTreeGrab = true);
-        LFCUtilities.UpdateTimer(ref doorThrowTimer, doorThrowTimer, !canDoorThrow && hasDoor, () => canDoorThrow = true);
+        LFCUtilities.UpdateTimer(ref doorThrowTimer, doorThrowCooldown, !canDoorThrow && hasDoor, () => canDoorThrow = true);
     }
 
     public void PlayMoveSound()
@@ -171,35 +171,32 @@ public class HenryAI : EnemyAI
             return;
         }
 
-        if (hasLOS)
+        if (canDoorGrab && !hasDoor)
         {
-            if (canDoorGrab && !hasDoor)
+            DoorLock targetDoor = FindDoorForGrab();
+            if (targetDoor != null)
             {
-                DoorLock targetDoor = FindDoorForGrab();
-                if (targetDoor != null)
-                {
-                    canDoorGrab = false;
-                    grabCoroutine ??= StartCoroutine(GrabDoorCoroutine(targetDoor.transform.root.gameObject));
-                    return;
-                }
-            }
-            if (canDoorThrow && hasDoor && distanceWithPlayer < 10f)
-            {
-                canDoorThrow = false;
-                throwCoroutine ??= StartCoroutine(ThrowDoorCoroutine());
-
-                IEnumerator ThrowDoorCoroutine()
-                {
-                    for (int i = 0; i < 2; i++)
-                    {
-                        yield return ThrowCoroutine(onThrow: () => { ThrowDoorEveryoneRpc(isLastThrow: i == 1); });
-                        if (i != 1)
-                            yield return new WaitForSeconds(0.3f);
-                    }
-                }
-
+                canDoorGrab = false;
+                grabCoroutine ??= StartCoroutine(GrabDoorCoroutine(targetDoor.transform.root.gameObject));
                 return;
             }
+        }
+        if (hasLOS && canDoorThrow && hasDoor && distanceWithPlayer < 10f)
+        {
+            canDoorThrow = false;
+            throwCoroutine ??= StartCoroutine(ThrowDoorCoroutine());
+
+            IEnumerator ThrowDoorCoroutine()
+            {
+                for (int i = 0; i < 2; i++)
+                {
+                    yield return ThrowCoroutine(onThrow: () => { ThrowDoorEveryoneRpc((int)targetPlayer.playerClientId, isLastThrow: i == 1); });
+                    if (i != 1)
+                        yield return new WaitForSeconds(0.3f);
+                }
+            }
+
+            return;
         }
         if (canTreeGrab)
         {
@@ -222,7 +219,7 @@ public class HenryAI : EnemyAI
                 return;
             }
         }
-        if (canRockGrab && isOutside && !isInsidePlayerShip)
+        if (canRockGrab && isOutside && !targetPlayer.isInElevator && !targetPlayer.isInHangarShipRoom)
         {
             GameObject[] rockObjects = SpawnRocksForGrab();
             if (rockObjects != null && rockObjects.Any(r => r != null))
@@ -244,15 +241,14 @@ public class HenryAI : EnemyAI
     {
         agent.speed = 0f;
         creatureAnimator.SetTrigger("startGrab");
-        if (HenrySounds.TryGetValue(Sound.GRAB, out AudioClip[] grabSounds) && grabSounds.Length > 0)
-            creatureSFX.PlayOneShot(grabSounds[UnityEngine.Random.Range(0, grabSounds.Length)]);
+        PlaySFX(Sound.GRAB);
 
         shipDoor.shipDoorsAnimator.SetBool("PryingOpenDoor", value: true);
         shipDoor.shipDoorsAnimator.SetFloat("pryOpenDoor", 0f);
         if (LFCUtilities.LocalPlayer.isInElevator || LFCUtilities.LocalPlayer.isInHangarShipRoom)
             HUDManager.Instance.ShakeCamera(ScreenShakeType.VeryStrong);
         StartOfRound.Instance.shipDoorAudioSource.PlayOneShot(StartOfRound.Instance.alarmSFX);
-        yield return this.WaitForFullAnimation("grab", onProgress: progress => shipDoor.shipDoorsAnimator.SetFloat("pryOpenDoor", progress));
+        yield return this.WaitForFullAnimation("grab", progress => shipDoor.shipDoorsAnimator.SetFloat("pryOpenDoor", progress));
 
         shipDoor.shipDoorsAnimator.SetBool("Closed", value: false);
         StartOfRound.Instance.SetShipDoorsClosed(closed: false);
@@ -260,8 +256,8 @@ public class HenryAI : EnemyAI
         shipDoor.doorPower = 0f;
         shipDoor.shipDoorsAnimator.SetBool("PryingOpenDoor", value: false);
 
-        DoAnimationEveryoneRpc("startMove");
-        PlayVoiceServerRpc((int)Voice.ANGRY);
+        creatureAnimator.SetTrigger("startMove");
+        PlayVoice(Voice.ANGRY);
         openShipDoorCoroutine = null;
     }
 
@@ -391,11 +387,10 @@ public class HenryAI : EnemyAI
         PlaySFXEveryoneRpc((int)Sound.GRAB);
         yield return this.WaitForFullAnimation("grab");
 
-        Collider treeCollider = targetTree.GetComponentsInChildren<Collider>().FirstOrDefault(c => c.isTrigger);
+        Collider treeCollider = targetTree.GetComponentsInChildren<Collider>()?.FirstOrDefault(c => c.isTrigger);
         if (treeCollider != null)
         {
             Vector3 treePosition = targetTree.transform.position + (Vector3.up * 2f);
-            _ = treeCollider != null ? treeCollider.bounds.size.y : 8f;
             Vector3 direction = targetPlayer.transform.position - treePosition;
             direction.y = 0f;
             direction = direction.normalized;
@@ -525,7 +520,8 @@ public class HenryAI : EnemyAI
                     position: rockProjectile.transform.position,
                     active: DimensionRegistry.AreInSameDimension(gameObject, LFCUtilities.LocalPlayer?.gameObject));
 
-                rockProjectile.GetComponent<NetworkObject>().Despawn();
+                if (LFCUtilities.IsServer)
+                    rockProjectile.GetComponent<NetworkObject>().Despawn();
             }
         }
         for (int i = 0; i < pebbleObjs.Length; i++)
@@ -564,12 +560,13 @@ public class HenryAI : EnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void ThrowDoorEveryoneRpc(bool isLastThrow)
+    public void ThrowDoorEveryoneRpc(int playerId, bool isLastThrow)
     {
         hasDoor = false;
         if (doorProjectile != null)
         {
-            doorProjectile.Throw((targetPlayer.transform.position + (Vector3.up * 1.2f) - doorProjectile.transform.position).normalized, 25f, isLastThrow);
+            PlayerControllerB player = StartOfRound.Instance.allPlayerObjects[playerId].GetComponent<PlayerControllerB>();
+            doorProjectile.Throw((player.transform.position + (Vector3.up * 1.2f) - doorProjectile.transform.position).normalized, 25f, isLastThrow);
             if (isLastThrow)
                 doorProjectile = null;
         }
@@ -580,7 +577,7 @@ public class HenryAI : EnemyAI
     {
         if (index < pebbleProjectiles.Length && pebbleProjectiles[index] != null)
         {
-            pebbleProjectiles[index].Throw(direction, 40f);
+            pebbleProjectiles[index].Throw(direction, 50f);
             pebbleProjectiles[index] = null;
         }
     }
@@ -626,7 +623,7 @@ public class HenryAI : EnemyAI
         {
             base.HitEnemy(force, playerWhoHit, playHitSFX, hitID);
 
-            enemyHP = System.Math.Max(enemyHP - force, 1);
+            enemyHP = Math.Max(enemyHP - force, 1);
             if (LFCUtilities.IsServer && enemyHP <= 1)
             {
                 if (ConfigManager.globalTips.Value)
@@ -672,22 +669,25 @@ public class HenryAI : EnemyAI
     // Détruire après animation
     public override void KillEnemy(bool destroy = false) => killCoroutine = StartCoroutine(KillCoroutine(destroy));
 
+    // Lancé seulement sur le serveur lorsque destroy = true
     public IEnumerator KillCoroutine(bool destroy)
     {
         agent.speed = 0f;
-        if (LFCUtilities.IsServer)
-            _ = MapObjectsManager.SpawnPortalForServer(transform.position, isOutside);
-        creatureAnimator.SetTrigger("KillEnemy");
-        creatureVoice.PlayOneShot(dieSFX);
+        DoAnimationEveryoneRpc("KillEnemy");
+        PlaySFXEveryoneRpc((int)Sound.DEATH);
+        PlayVoiceEveryoneRpc((int)Voice.ANGRY);
+        _ = MapObjectsManager.SpawnPortalForServer(transform.position, isOutside);
         yield return this.WaitForFullAnimation("kill");
 
         base.KillEnemy(destroy);
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlaySFXEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int soundId) => PlaySFX((Sound)soundId);
+
+    public void PlaySFX(Sound enemySound)
     {
-        if (HenrySounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+        if (HenrySounds.TryGetValue(enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
             creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 
@@ -702,9 +702,11 @@ public class HenryAI : EnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlayVoiceEveryoneRpc(int enemyVoice)
+    public void PlayVoiceEveryoneRpc(int voiceId) => PlayVoice((Voice)voiceId);
+
+    public void PlayVoice(Voice enemyVoice)
     {
-        if (HenryVoices.TryGetValue((Voice)enemyVoice, out AudioClip[] enemyVoices) && enemyVoices.Length > 0)
+        if (HenryVoices.TryGetValue(enemyVoice, out AudioClip[] enemyVoices) && enemyVoices.Length > 0)
             creatureVoice.PlayOneShot(enemyVoices[UnityEngine.Random.Range(0, enemyVoices.Length)]);
     }
 

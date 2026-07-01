@@ -64,8 +64,7 @@ public class CrustapikanLarvaeAI : UpsideDownEnemyAI
     public IEnumerator SpawnCoroutine()
     {
         agent.speed = 0f;
-        if (CrustapikanLarvaeSounds.TryGetValue(Sound.DIGOUT, out AudioClip[] enemySounds) && enemySounds.Length > 0)
-            creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
+        PlaySFX(Sound.DIGOUT);
         yield return this.WaitForFullAnimation("spawn");
 
         agent.speed = 3f;
@@ -369,9 +368,11 @@ public class CrustapikanLarvaeAI : UpsideDownEnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlaySFXEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int soundId) => PlaySFX((Sound)soundId);
+
+    public void PlaySFX(Sound enemySound)
     {
-        if (CrustapikanLarvaeSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+        if (CrustapikanLarvaeSounds.TryGetValue(enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
             creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 

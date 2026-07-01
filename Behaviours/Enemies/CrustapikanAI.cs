@@ -465,9 +465,9 @@ public class CrustapikanAI : UpsideDownEnemyAI
     }
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlaySFXEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int soundId)
     {
-        if (CrustapikanSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+        if (CrustapikanSounds.TryGetValue((Sound)soundId, out AudioClip[] enemySounds) && enemySounds.Length > 0)
             creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 

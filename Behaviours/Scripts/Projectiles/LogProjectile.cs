@@ -46,7 +46,7 @@ public class LogProjectile : NetworkBehaviour
 
         float previousAngle = 0f;
         float timePassed = 0f;
-        float duration = 0.5f;
+        float duration = 0.1f;
 
         while (timePassed < duration && !hasHit)
         {
@@ -65,8 +65,8 @@ public class LogProjectile : NetworkBehaviour
 
         // Vélocité de transition pour fluidifier la chute
         Rigidbody.angularVelocity = rotationAxis * 0.8f;
-        Rigidbody.isKinematic = false;
         Rigidbody.useGravity = true;
+        Rigidbody.isKinematic = false;
     }
 
     private void LateUpdate()
@@ -80,7 +80,7 @@ public class LogProjectile : NetworkBehaviour
             if (syncTimer >= 0.05f)
             {
                 syncTimer = 0f;
-                SyncPositionNotServerRpc(transform.position, transform.rotation);
+                SyncPositionNotServerRpc(transform.position, transform.rotation, hasLanded: false);
             }
         }
         else
@@ -98,9 +98,9 @@ public class LogProjectile : NetworkBehaviour
                 hasLanded = true;
                 Rigidbody.velocity = Vector3.zero;
                 Rigidbody.angularVelocity = Vector3.zero;
+                Rigidbody.useGravity = false;
                 Rigidbody.isKinematic = true;
-                if (LFCUtilities.IsServer)
-                    SyncPositionNotServerRpc(transform.position, transform.rotation);
+                SyncPositionNotServerRpc(transform.position, transform.rotation, hasLanded: true);
             }
             return;
         }
@@ -108,8 +108,20 @@ public class LogProjectile : NetworkBehaviour
     }
 
     [Rpc(SendTo.NotServer, RequireOwnership = false)]
-    public void SyncPositionNotServerRpc(Vector3 position, Quaternion rotation)
+    public void SyncPositionNotServerRpc(Vector3 position, Quaternion rotation, bool hasLanded)
     {
+        if (hasLanded)
+        {
+            this.hasLanded = true;
+            transform.position = position;
+            transform.rotation = rotation;
+            Rigidbody.velocity = Vector3.zero;
+            Rigidbody.angularVelocity = Vector3.zero;
+            Rigidbody.useGravity = false;
+            Rigidbody.isKinematic = true;
+            return;
+        }
+
         networkPosition = position;
         networkRotation = rotation;
     }

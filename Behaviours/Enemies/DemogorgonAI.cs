@@ -364,7 +364,7 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     {
         if (obj.TryGet(out NetworkObject networkObject))
         {
-            GameObject doorObject = networkObject.gameObject;
+            GameObject doorObject = networkObject.transform.root.gameObject;
             doorObject.transform.position += direction * 0.5f;
 
             DoorProjectile doorProjectile = doorObject.GetComponent<DoorProjectile>() ?? doorObject.AddComponent<DoorProjectile>();
@@ -382,9 +382,9 @@ public abstract class DemogorgonAI : UpsideDownEnemyAI
     public void RestoreEnemyHealthEveryoneRpc() => enemyHP = 10;
 
     [Rpc(SendTo.Everyone, RequireOwnership = false)]
-    public void PlaySFXEveryoneRpc(int enemySound)
+    public void PlaySFXEveryoneRpc(int soundId)
     {
-        if (DemogorgonSounds.TryGetValue((Sound)enemySound, out AudioClip[] enemySounds) && enemySounds.Length > 0)
+        if (DemogorgonSounds.TryGetValue((Sound)soundId, out AudioClip[] enemySounds) && enemySounds.Length > 0)
             creatureSFX.PlayOneShot(enemySounds[UnityEngine.Random.Range(0, enemySounds.Length)]);
     }
 

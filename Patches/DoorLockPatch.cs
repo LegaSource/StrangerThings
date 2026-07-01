@@ -13,14 +13,9 @@ public class DoorLockPatch
     [HarmonyPostfix]
     private static void BreakDoor(DoorLock __instance, ref Collider other)
     {
-        if (!LFCUtilities.IsServer || __instance.isDoorOpened || __instance.GetComponent<DoorProjectile>() != null || other == null || !other.CompareTag("Enemy")) return;
-
-        EnemyAICollisionDetect collision = other.GetComponent<EnemyAICollisionDetect>();
-        if (collision != null && collision.mainScript is DemogorgonAI demogorgon && demogorgon.isDashing)
+        if (LFCUtilities.IsServer && !__instance.isDoorOpened && !__instance.transform.root.TryGetComponent(out DoorProjectile _) && other.TryGetComponent(out EnemyAICollisionDetect collision) && collision.mainScript is DemogorgonAI demogorgon && demogorgon.isDashing)
         {
-            //Vector3 direction = (demogorgon.targetPlayer.transform.position - demogorgon.transform.position).normalized * 5f;
             demogorgon.BreakDoorEveryoneRpc(__instance.GetComponentInParent<NetworkObject>(), (demogorgon.targetPlayer.transform.position - demogorgon.transform.position).normalized);
-
             demogorgon.agent.speed = 0f;
             demogorgon.agent.velocity = Vector3.zero;
         }

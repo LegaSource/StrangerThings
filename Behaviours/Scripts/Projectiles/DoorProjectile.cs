@@ -159,12 +159,6 @@ public class DoorProjectile : MonoBehaviour
         {
             if (isLanding && isLastThrow)
             {
-                if (Rigidbody.velocity.magnitude <= LowVelocityThreshold && Rigidbody.angularVelocity.magnitude <= LowVelocityThreshold)
-                {
-                    hasLanded = true;
-                    StrangerThingsNetworkManager.Instance.SyncDoorPositionNotServerRpc(GetComponent<NetworkObject>(), transform.position, transform.rotation, hasLanded: true);
-                    return;
-                }
                 if (LFCUtilities.IsServer)
                 {
                     syncTimer += Time.deltaTime;
@@ -178,6 +172,16 @@ public class DoorProjectile : MonoBehaviour
                 {
                     transform.position = Vector3.Lerp(transform.position, networkPosition, Time.deltaTime * 18f);
                     transform.rotation = Quaternion.Slerp(transform.rotation, networkRotation, Time.deltaTime * 18f);
+                    return;
+                }
+                if (Rigidbody.velocity.magnitude <= LowVelocityThreshold && Rigidbody.angularVelocity.magnitude <= LowVelocityThreshold)
+                {
+                    hasLanded = true;
+                    Rigidbody.velocity = Vector3.zero;
+                    Rigidbody.angularVelocity = Vector3.zero;
+                    Rigidbody.useGravity = false;
+                    Rigidbody.isKinematic = true;
+                    StrangerThingsNetworkManager.Instance.SyncDoorPositionNotServerRpc(GetComponent<NetworkObject>(), transform.position, transform.rotation, hasLanded: true);
                     return;
                 }
             }
@@ -195,12 +199,15 @@ public class DoorProjectile : MonoBehaviour
 
     public void OnTriggerEnter(Collider collider)
     {
-        if (LFCUtilities.IsServer && isThrown && !isLanding && !hasHit && collider.gameObject.TryGetComponentInParent(out PlayerControllerB player))
+        if (LFCUtilities.IsServer && isThrown && !isLanding && !hasHit)
         {
-            hasHit = true;
             PlayImpactAudio();
-            LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 80);
-            Land();
+            if (collider.gameObject.TryGetComponentInParent(out PlayerControllerB player))
+            {
+                hasHit = true;
+                LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 50);
+                Land();
+            }
         }
     }
 
@@ -215,27 +222,39 @@ public class DoorProjectile : MonoBehaviour
             BoxCollider.enabled = true;
         }
 
-        SphereCollider trigger = GetComponent<SphereCollider>();
-        if (trigger != null)
-            Destroy(trigger);
+        if (TryGetComponent(out SphereCollider sphereCollider))
+            Destroy(sphereCollider);
 
-        Rigidbody.velocity *= 0.2f;
+        Rigidbody.velocity = Vector3.zero;
         Rigidbody.angularVelocity = Vector3.zero;
-        Rigidbody.useGravity = true;
-        Rigidbody.AddTorque(transform.right * 3f, ForceMode.Impulse);
+        if (LFCUtilities.IsServer)
+        {
+            Rigidbody.useGravity = true;
+            Rigidbody.AddTorque(transform.right * 3f, ForceMode.Impulse);
+        }
     }
 
     public void SyncPosition(Vector3 position, Quaternion rotation, bool hasLanded)
     {
+        if (hasLanded)
+        {
+            this.hasLanded = true;
+            transform.position = position;
+            transform.rotation = rotation;
+            Rigidbody.velocity = Vector3.zero;
+            Rigidbody.angularVelocity = Vector3.zero;
+            Rigidbody.useGravity = false;
+            Rigidbody.isKinematic = true;
+            return;
+        }
+
         networkPosition = position;
         networkRotation = rotation;
-        this.hasLanded = hasLanded;
     }
 
     public void PlayImpactAudio()
     {
         GameObject[] audios = [StrangerThings.DoorImpact1AudioObj, StrangerThings.DoorImpact2AudioObj, StrangerThings.DoorImpact3AudioObj];
-        LFCNetworkManager.Instance.PlayAudioEveryoneRpc(
-            audios[Random.Range(0, audios.Length)].name, transform.position);
+        LFCNetworkManager.Instance.PlayAudioEveryoneRpc(audios[Random.Range(0, audios.Length)].name, transform.position);
     }
 }

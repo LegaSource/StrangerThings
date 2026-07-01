@@ -40,13 +40,14 @@ public class PebbleProjectile : NetworkBehaviour
     private IEnumerator MoveToPositionCoroutine(Vector3 targetPosition, float duration)
     {
         float timePassed = 0f;
-        while (timePassed < duration)
+        while (timePassed < duration && transform != null)
         {
             timePassed += Time.deltaTime;
             transform.position = Vector3.Lerp(transform.position, targetPosition, Mathf.SmoothStep(0f, 1f, timePassed / duration));
             yield return null;
         }
-        transform.position = targetPosition;
+        if (transform != null)
+            transform.position = targetPosition;
     }
 
     public void Throw(Vector3 direction, float force)
@@ -60,21 +61,21 @@ public class PebbleProjectile : NetworkBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (!LFCUtilities.IsServer || collision == null || !isThrown) return;
+        if (!LFCUtilities.IsServer || collision == null || !isThrown || !NetworkObject.IsSpawned) return;
         if (collision.collider != null && (collision.collider.gameObject.TryGetComponentInParent(out PlayerControllerB _) || collision.collider.gameObject.TryGetComponentInParent(out EnemyAI _)))
             return;
 
         SpawnRockExplosionEveryoneRpc(transform.position);
-        Destroy(gameObject);
+        NetworkObject.Despawn(gameObject);
     }
 
     private void OnTriggerEnter(Collider collider)
     {
-        if (LFCUtilities.IsServer && isThrown && collider != null && collider.TryGetComponent(out PlayerControllerB player) && DimensionRegistry.AreInSameDimension(player.gameObject, gameObject))
+        if (LFCUtilities.IsServer && isThrown && NetworkObject.IsSpawned && collider != null && collider.TryGetComponent(out PlayerControllerB player) && DimensionRegistry.AreInSameDimension(player.gameObject, gameObject))
         {
             LFCNetworkManager.Instance.DamagePlayerEveryoneRpc((int)player.playerClientId, 10, hasDamageSFX: true, callRPC: true, (int)CauseOfDeath.Crushing);
             SpawnRockExplosionEveryoneRpc(transform.position);
-            Destroy(gameObject);
+            NetworkObject.Despawn(gameObject);
         }
     }
 

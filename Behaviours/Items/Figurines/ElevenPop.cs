@@ -9,8 +9,8 @@ namespace StrangerThings.Behaviours.Items.Figurines;
 
 public class ElevenPop : FigurinePop
 {
-    public HenryAI aimedEnemy;
-    public PlayerControllerB aimedPlayer;
+    private HenryAI aimedEnemy;
+    private PlayerControllerB aimedPlayer;
 
     private readonly string auraTag = $"{StrangerThings.modName}ElevenPopAimed";
     private readonly float auraRadius = 5f;
@@ -29,8 +29,7 @@ public class ElevenPop : FigurinePop
 
         if (onCooldown || !isHeld || isPocketed || !LFCUtilities.ShouldBeLocalPlayer(playerHeldBy))
         {
-            RemoveAuraFromEnemy(auraTag, ref aimedEnemy);
-            RemoveAuraFromPlayer(auraTag, ref aimedPlayer);
+            ClearAuras();
             return;
         }
 
@@ -41,36 +40,27 @@ public class ElevenPop : FigurinePop
             if (collider == null || !DimensionRegistry.AreInSameDimension(playerHeldBy.gameObject, collider.gameObject))
                 continue;
 
-            if (collider.gameObject.TryGetComponentInParent(out PlayerControllerB player) && !player.isPlayerDead && player != playerHeldBy && aimedPlayer != player)
+            if (collider.gameObject.TryGetComponentInParent(out EnemyAICollisionDetect collisionDetect) && collisionDetect.mainScript is HenryAI henry && !henry.isEnemyDead && henry.NetworkObject != null && aimedEnemy != henry)
             {
-                RemoveAuraFromEnemy(auraTag, ref aimedEnemy);
-                RemoveAuraFromPlayer(auraTag, ref aimedPlayer);
-
-                aimedPlayer = player;
-                LFCCustomPassManager.SetupAuraForObjects([player.gameObject], LegaFusionCore.LegaFusionCore.transparentShader, auraTag, Color.yellow);
+                SetAimedTarget(henry, Color.red, ref aimedEnemy);
                 return;
             }
 
-            if (collider.gameObject.TryGetComponentInParent(out EnemyAICollisionDetect collisionDetect) && collisionDetect.mainScript is HenryAI henry && !henry.isEnemyDead && henry.NetworkObject != null && aimedEnemy != henry)
+            if (collider.gameObject.TryGetComponentInParent(out PlayerControllerB player) && !player.isPlayerDead && player != playerHeldBy && aimedPlayer != player)
             {
-                RemoveAuraFromEnemy(auraTag, ref aimedEnemy);
-                RemoveAuraFromPlayer(auraTag, ref aimedPlayer);
-
-                aimedEnemy = henry;
-                LFCCustomPassManager.SetupAuraForObjects([henry.gameObject], LegaFusionCore.LegaFusionCore.transparentShader, auraTag, Color.red);
+                SetAimedTarget(player, Color.yellow, ref aimedPlayer);
                 return;
             }
         }
 
-        RemoveAuraFromEnemy(auraTag, ref aimedEnemy);
-        RemoveAuraFromPlayer(auraTag, ref aimedPlayer);
+        ClearAuras();
     }
 
     public override void ItemActivate(bool used, bool buttonDown = true)
     {
         if (buttonDown && !onCooldown && playerHeldBy != null)
         {
-            if (aimedEnemy != null && aimedEnemy.enemyHP <= 1)
+            if (aimedEnemy != null)
             {
                 aimedEnemy.KillEnemyServerRpc(destroy: true);
                 StartChronoEveryoneRpc(cooldown: 120);
@@ -79,20 +69,23 @@ public class ElevenPop : FigurinePop
         }
     }
 
-    public void RemoveAuraFromEnemy(string tag, ref HenryAI aimedEnemy)
+    private void SetAimedTarget<T>(T target, Color color, ref T aimedTarget) where T : Component
     {
-        if (aimedEnemy != null)
-        {
-            LFCCustomPassManager.RemoveAuraFromObject(aimedEnemy.gameObject, tag);
-            aimedEnemy = null;
-        }
+        ClearAuras();
+        aimedTarget = target;
+        LFCCustomPassManager.SetupAuraForObjects([target.gameObject], LegaFusionCore.LegaFusionCore.transparentShader, auraTag, color);
     }
 
-    public static void RemoveAuraFromPlayer(string tag, ref PlayerControllerB aimedPlayer)
+    private void ClearAuras()
     {
-        if (aimedPlayer != null)
+        if (aimedEnemy?.gameObject != null)
         {
-            LFCCustomPassManager.RemoveAuraFromObject(aimedPlayer.gameObject, tag);
+            LFCCustomPassManager.RemoveAuraFromObject(aimedEnemy.gameObject, auraTag);
+            aimedEnemy = null;
+        }
+        if (aimedPlayer?.gameObject != null)
+        {
+            LFCCustomPassManager.RemoveAuraFromObject(aimedPlayer.gameObject, auraTag);
             aimedPlayer = null;
         }
     }
